@@ -134,6 +134,13 @@ pub enum LibraryCommands {
 
 #[tokio::main]
 async fn main() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .init();
+
     let cli = Cli::parse();
 
     let mut paths = AppPaths::from_dirs();
@@ -154,9 +161,7 @@ async fn main() {
             "ex" => eh_client::Site::Ex,
             _ => eh_client::Site::Eh,
         };
-        let mut s = core.settings.get();
-        s.site = site;
-        let _ = core.settings.update(s);
+        core.client.set_site(site);
     }
 
     let json = cli.json;
@@ -211,6 +216,6 @@ async fn main() {
 }
 
 fn handle_error(err: &IpcError) {
-    eprintln!("error[{:?}]: {}", err.kind, err.message);
+    eprintln!("error[{}]: {}", err.kind.as_str(), err.message);
     std::process::exit(1);
 }
