@@ -1,0 +1,18 @@
+{
+  "site": "eh",
+  "proxy": null,
+  "downloadDir": "/home/user/Downloads/RHenTai",
+  "downloadConcurrency": 4,
+  "downloadOriginal": false,
+  "libraryDirs": [
+    "/home/user/Manga"
+  ],
+  "reader": {
+    "mode": "vertical",
+    "direction": "ltr",
+    "fit": "width",
+    "preload": 3
+  },
+  "theme": "system",
+  "language": "zh-CN"
+}

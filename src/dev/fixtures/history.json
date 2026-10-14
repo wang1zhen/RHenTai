@@ -1,0 +1,28 @@
+[
+  {
+    "target": {
+      "kind": "online",
+      "gid": 4253614,
+      "token": "80d42b7a37"
+    },
+    "title": "[neko-kuro] 櫻井桃華 [AI Generated]",
+    "thumb": "https://ehgt.org/w/02/714/57443-ao8ipua7.webp",
+    "category": "misc",
+    "pageCount": 272,
+    "lastPage": 5,
+    "readAt": 1791968321
+  },
+  {
+    "id": "local_mock_1",
+    "target": {
+      "kind": "local",
+      "id": "local_mock_1"
+    },
+    "title": "[neko-kuro] 櫻井桃華 [AI Generated]",
+    "thumb": "https://ehgt.org/w/02/714/57443-ao8ipua7.webp",
+    "category": "misc",
+    "pageCount": 272,
+    "lastPage": 3,
+    "readAt": 1791965321
+  }
+]

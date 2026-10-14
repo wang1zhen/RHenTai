@@ -1,0 +1,52 @@
+[
+  {
+    "slot": 0,
+    "name": "Favorite 0",
+    "count": 4
+  },
+  {
+    "slot": 1,
+    "name": "Read Later",
+    "count": 2
+  },
+  {
+    "slot": 2,
+    "name": "Masterpieces",
+    "count": 2
+  },
+  {
+    "slot": 3,
+    "name": "Cosplay",
+    "count": 1
+  },
+  {
+    "slot": 4,
+    "name": "CG Sets",
+    "count": 1
+  },
+  {
+    "slot": 5,
+    "name": "Favorite 5",
+    "count": 0
+  },
+  {
+    "slot": 6,
+    "name": "Favorite 6",
+    "count": 0
+  },
+  {
+    "slot": 7,
+    "name": "Favorite 7",
+    "count": 0
+  },
+  {
+    "slot": 8,
+    "name": "Favorite 8",
+    "count": 0
+  },
+  {
+    "slot": 9,
+    "name": "Favorite 9",
+    "count": 0
+  }
+]
