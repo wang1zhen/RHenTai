@@ -59,6 +59,13 @@ impl EhClient {
         *self.inner.site.write().unwrap() = site;
     }
 
+    /// Replace the proxy used by all subsequent requests. The HTTP client is rebuilt and the cookie
+    /// jar is kept. Contract stub: the eh-client implementation lane replaces this body.
+    pub fn set_proxy(&self, proxy: Option<String>) -> Result<()> {
+        let _ = proxy;
+        Ok(())
+    }
+
     // auth
     pub async fn auth_status(&self, _verify_online: bool) -> Result<AuthStatus> {
         Err(EhError::new(

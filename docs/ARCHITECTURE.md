@@ -97,6 +97,7 @@ impl EhClient {
     pub fn new(cfg: ClientConfig) -> Result<Self>;
     pub fn site(&self) -> Site;
     pub fn set_site(&self, site: Site);
+    pub fn set_proxy(&self, proxy: Option<String>) -> Result<()>;   // rebuilds the HTTP client, keeps cookies
 
     // auth (docs/EH_PROTOCOL.md §2)
     pub async fn auth_status(&self, verify_online: bool) -> Result<AuthStatus>;
