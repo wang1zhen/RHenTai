@@ -1,0 +1,44 @@
+[
+  {
+    "id": "local_mock_1",
+    "title": "[neko-kuro] 櫻井桃華 [AI Generated]",
+    "path": "/home/user/Downloads/RHenTai/4253614 - [neko-kuro] 櫻井桃華 [AI Generated",
+    "kind": "folder",
+    "pageCount": 272,
+    "gid": 4253614,
+    "token": "80d42b7a37",
+    "category": "misc",
+    "tags": [
+      {
+        "namespace": "character",
+        "name": "momoka sakurai"
+      },
+      {
+        "namespace": "other",
+        "name": "ai generated"
+      }
+    ],
+    "downloaded": true,
+    "addedAt": 1791965321,
+    "lastReadPage": 3
+  },
+  {
+    "id": "local_mock_2",
+    "title": "[Anthology] Local Manga Collection.cbz",
+    "path": "/home/user/Manga/Local Manga Collection.cbz",
+    "kind": "archive",
+    "pageCount": 42,
+    "gid": null,
+    "token": null,
+    "category": "manga",
+    "tags": [
+      {
+        "namespace": "language",
+        "name": "japanese"
+      }
+    ],
+    "downloaded": false,
+    "addedAt": 1791882521,
+    "lastReadPage": null
+  }
+]

@@ -1,1 +1,20 @@
 @import "tailwindcss";
+
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+/* Base styles for native select options in WebKitGTK and Chromium */
+select option {
+  background-color: #ffffff;
+  color: #111827;
+}
+
+html.dark select option {
+  background-color: #1f2937;
+  color: #f3f4f6;
+}

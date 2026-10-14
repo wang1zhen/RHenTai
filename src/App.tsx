@@ -44,14 +44,15 @@ export const App: React.FC = () => {
             <Route path="/watched" element={<WatchedPage />} />
             <Route path="/favorites" element={<FavoritesPage />} />
             <Route path="/gallery/:gid/:token" element={<GalleryDetailPage />} />
-            <Route path="/read/online/:gid/:token" element={<OnlineReaderPage />} />
-            <Route path="/read/local/:id" element={<LocalReaderPage />} />
             <Route path="/downloads" element={<DownloadsPage />} />
             <Route path="/library" element={<LibraryPage />} />
             <Route path="/history" element={<HistoryPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/login" element={<LoginPage />} />
           </Route>
+          {/* Full-screen Reader Routes */}
+          <Route path="/read/online/:gid/:token" element={<OnlineReaderPage />} />
+          <Route path="/read/local/:id" element={<LocalReaderPage />} />
         </Routes>
       </HashRouter>
     </QueryClientProvider>

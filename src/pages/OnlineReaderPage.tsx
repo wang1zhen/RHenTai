@@ -1,21 +1,69 @@
 import React from "react";
 import { useParams, useSearchParams } from "react-router";
-import { useT } from "@/i18n";
+import { useQuery } from "@tanstack/react-query";
+import { RefreshCw } from "lucide-react";
+import { galleryDetail, listHistory } from "@/api/ipc";
+import { ReaderContainer } from "@/reader/ReaderContainer";
+import { ErrorState } from "@/components/ErrorState";
 
 export const OnlineReaderPage: React.FC = () => {
-  const { gid, token } = useParams<{ gid: string; token: string }>();
+  const { gid: gidStr, token } = useParams<{ gid: string; token: string }>();
   const [searchParams] = useSearchParams();
-  const page = searchParams.get("page") ?? "0";
-  const { t } = useT();
+  const gid = Number(gidStr);
+
+  const pageQuery = searchParams.get("page");
+  const requestedPage = pageQuery ? parseInt(pageQuery, 10) : undefined;
+
+  // Fetch gallery detail
+  const {
+    data: detail,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
+    queryKey: ["galleryDetail", gid, token],
+    queryFn: () => galleryDetail({ gid, token: token || "" }),
+    enabled: !isNaN(gid) && Boolean(token),
+  });
+
+  // Check history for resume page if not explicitly provided in URL
+  const { data: history = [] } = useQuery({
+    queryKey: ["history"],
+    queryFn: listHistory,
+    enabled: requestedPage === undefined,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="fixed inset-0 z-50 bg-black flex items-center justify-center">
+        <RefreshCw className="w-8 h-8 animate-spin text-sky-500" />
+      </div>
+    );
+  }
+
+  if (isError || !detail) {
+    return (
+      <div className="fixed inset-0 z-50 bg-gray-950 flex items-center justify-center">
+        <ErrorState error={error} onRetry={() => refetch()} />
+      </div>
+    );
+  }
+
+  const historyEntry = history.find(
+    (h) => h.target.kind === "online" && h.target.gid === gid,
+  );
+
+  const startPage = requestedPage || historyEntry?.lastPage || 1;
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold tracking-tight mb-4">{t("onlineReader")}</h1>
-      <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6 shadow-xs space-y-2">
-        <p className="text-gray-600 dark:text-gray-400">
-          Reading gallery {gid}/{token} at page {page}.
-        </p>
-      </div>
-    </div>
+    <ReaderContainer
+      target={{ kind: "online", gid, token: token || "" }}
+      title={detail.summary.title}
+      thumb={detail.summary.thumb}
+      category={detail.summary.category}
+      pageCount={detail.summary.fileCount}
+      initialPage={startPage}
+    />
   );
 };

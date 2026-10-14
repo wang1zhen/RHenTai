@@ -1,0 +1,38 @@
+[
+  {
+    "id": 1,
+    "gid": 4253614,
+    "token": "80d42b7a37",
+    "site": "eh",
+    "title": "[neko-kuro] 櫻井桃華 [AI Generated]",
+    "thumb": "https://ehgt.org/w/02/714/57443-ao8ipua7.webp",
+    "category": "misc",
+    "total": 272,
+    "done": 15,
+    "failed": 0,
+    "state": "running",
+    "error": null,
+    "dir": "/home/user/Downloads/RHenTai/4253614 - [neko-kuro] 櫻井桃華 [AI Generated",
+    "original": false,
+    "createdAt": 1791965321,
+    "updatedAt": 1791968921
+  },
+  {
+    "id": 2,
+    "gid": 4253612,
+    "token": "30ff10ddf1",
+    "site": "eh",
+    "title": "[北川時] 気になる同僚♂とのアレコレ",
+    "thumb": "https://ehgt.org/w/02/716/06840-rhcem9lg.webp",
+    "category": "manga",
+    "total": 24,
+    "done": 24,
+    "failed": 0,
+    "state": "completed",
+    "error": null,
+    "dir": "/home/user/Downloads/RHenTai/completed",
+    "original": false,
+    "createdAt": 1791961721,
+    "updatedAt": 1791967921
+  }
+]
