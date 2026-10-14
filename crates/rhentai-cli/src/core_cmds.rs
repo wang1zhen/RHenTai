@@ -1,7 +1,10 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use eh_client::GalleryKey;
-use rhentai_core::{Core, EnqueueRequest, IpcError, LocalId, PathRequest};
+use rhentai_core::{
+    Core, CoreEvent, DownloadState, DownloadTask, EnqueueRequest, IpcError, LocalId, TaskId,
+};
 
 fn parse_gallery_key(gallery: &str) -> Result<GalleryKey, IpcError> {
     let s = gallery.trim_end_matches('/');
@@ -25,25 +28,155 @@ pub async fn download(
     core: &Core,
     galleries: Vec<String>,
     original: bool,
-    _concurrency: Option<u8>,
-    _dir: Option<PathBuf>,
+    concurrency: Option<u8>,
+    dir: Option<PathBuf>,
     json: bool,
 ) -> Result<(), IpcError> {
     let mut keys = Vec::new();
     for g in galleries {
         keys.push(parse_gallery_key(&g)?);
     }
+
+    core.downloads.set_run_overrides(concurrency, dir);
+
+    let mut rx = core.subscribe();
+
     let req = EnqueueRequest {
         galleries: keys,
         original: Some(original),
     };
     let tasks = core.enqueue_downloads(req).await?;
-    if json {
-        println!("{}", serde_json::to_string_pretty(&tasks)?);
-    } else {
-        println!("Enqueued {} tasks", tasks.len());
+    if tasks.is_empty() {
+        return Ok(());
     }
-    Ok(())
+
+    let task_ids: Vec<i64> = tasks.iter().map(|t| t.id).collect();
+
+    for t in &tasks {
+        if t.state == DownloadState::Paused || t.state == DownloadState::Failed {
+            core.resume_download(TaskId { id: t.id }).await?;
+            let line = format!(
+                "[task {}] resuming {}: {}/{} pages already present",
+                t.id, t.gid, t.done, t.total
+            );
+            if json {
+                eprintln!("{line}");
+            } else {
+                println!("{line}");
+            }
+        } else {
+            let line = format!("[task {}] starting {}", t.id, t.gid);
+            if json {
+                eprintln!("{line}");
+            } else {
+                println!("{line}");
+            }
+        }
+    }
+
+    core.start();
+
+    let mut finished_states: HashMap<i64, DownloadTask> = HashMap::new();
+
+    loop {
+        let current_tasks = core.list_downloads().await?;
+        let mut all_done = true;
+        for t in &current_tasks {
+            if task_ids.contains(&t.id) {
+                if t.state == DownloadState::Completed
+                    || t.state == DownloadState::Failed
+                    || t.state == DownloadState::Paused
+                {
+                    finished_states.insert(t.id, t.clone());
+                } else {
+                    all_done = false;
+                }
+            }
+        }
+
+        if all_done && finished_states.len() == task_ids.len() {
+            break;
+        }
+
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                let _ = core.pause_all().await;
+                return Err(IpcError::new(
+                    eh_client::ErrorKind::Cancelled,
+                    "Download interrupted by Ctrl-C; tasks paused",
+                ));
+            }
+            ev = rx.recv() => {
+                match ev {
+                    Ok(CoreEvent::DownloadProgress(p)) => {
+                        if task_ids.contains(&p.id) {
+                            let line = format!(
+                                "[task {}] {:?}: {}/{} (failed: {})",
+                                p.id, p.state, p.done, p.total, p.failed
+                            );
+                            if json {
+                                eprintln!("{line}");
+                            } else {
+                                println!("{line}");
+                            }
+                            if (p.state == DownloadState::Completed
+                                || p.state == DownloadState::Failed
+                                || p.state == DownloadState::Paused)
+                                && let Ok(Some(task)) = core.store.get_download(p.id)
+                            {
+                                finished_states.insert(p.id, task);
+                            }
+                        }
+                    }
+                    Ok(CoreEvent::DownloadsChanged) => {}
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    let all_completed = finished_states
+        .values()
+        .all(|t| t.state == DownloadState::Completed);
+
+    if json {
+        let results: Vec<&DownloadTask> = task_ids
+            .iter()
+            .filter_map(|id| finished_states.get(id))
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&results)?);
+    }
+
+    if all_completed {
+        Ok(())
+    } else if let Some(failed_task) = finished_states
+        .values()
+        .find(|t| t.state == DownloadState::Failed || t.state == DownloadState::Paused)
+    {
+        let kind = match failed_task.state {
+            DownloadState::Paused => {
+                if let Some(ref err) = failed_task.error {
+                    if err.contains("ImageLimit") {
+                        eh_client::ErrorKind::ImageLimit
+                    } else if err.contains("Banned") {
+                        eh_client::ErrorKind::Banned
+                    } else {
+                        eh_client::ErrorKind::Internal
+                    }
+                } else {
+                    eh_client::ErrorKind::Internal
+                }
+            }
+            _ => eh_client::ErrorKind::Internal,
+        };
+        let msg = failed_task
+            .error
+            .clone()
+            .unwrap_or_else(|| format!("Task {} {:?}", failed_task.id, failed_task.state));
+        Err(IpcError::new(kind, msg))
+    } else {
+        Err(IpcError::internal("Download finished with errors"))
+    }
 }
 
 pub async fn downloads(core: &Core, json: bool) -> Result<(), IpcError> {
@@ -52,22 +185,36 @@ pub async fn downloads(core: &Core, json: bool) -> Result<(), IpcError> {
         println!("{}", serde_json::to_string_pretty(&tasks)?);
     } else {
         println!("Downloads count: {}", tasks.len());
+        for t in &tasks {
+            println!(
+                "  [{}] gid: {}, state: {:?}, progress: {}/{}, dir: {}",
+                t.id, t.gid, t.state, t.done, t.total, t.dir
+            );
+        }
     }
     Ok(())
 }
 
 pub async fn library_scan(core: &Core, dirs: Vec<PathBuf>, json: bool) -> Result<(), IpcError> {
-    for d in dirs {
-        core.add_library_dir(PathRequest {
-            path: d.to_string_lossy().to_string(),
-        })
-        .await?;
+    let s = core.settings.get();
+    let mut roots = vec![PathBuf::from(&s.download_dir)];
+    roots.extend(s.library_dirs.iter().map(PathBuf::from));
+    roots.extend(dirs);
+
+    let (list, warnings) = core.library.rescan_report(&roots)?;
+    for w in warnings {
+        eprintln!("warning: skipped {}: {}", w.path.display(), w.reason);
     }
-    let list = core.rescan_library().await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&list)?);
     } else {
         println!("Scanned {} galleries", list.len());
+        for g in &list {
+            println!(
+                "  [{}] {} ({} pages, {:?})",
+                g.id, g.title, g.page_count, g.kind
+            );
+        }
     }
     Ok(())
 }
@@ -78,6 +225,9 @@ pub async fn library_pages(core: &Core, id: String, json: bool) -> Result<(), Ip
         println!("{}", serde_json::to_string_pretty(&pages)?);
     } else {
         println!("Local gallery has {} pages", pages.count);
+        for (i, name) in pages.names.iter().enumerate() {
+            println!("  {:04}: {}", i + 1, name);
+        }
     }
     Ok(())
 }

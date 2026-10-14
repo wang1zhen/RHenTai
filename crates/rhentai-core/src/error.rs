@@ -58,4 +58,10 @@ impl From<serde_json::Error> for IpcError {
     }
 }
 
+impl From<rusqlite::Error> for IpcError {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::new(ErrorKind::Db, err.to_string())
+    }
+}
+
 pub type Result<T, E = IpcError> = std::result::Result<T, E>;

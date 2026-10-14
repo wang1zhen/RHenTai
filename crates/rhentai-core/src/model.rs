@@ -1,4 +1,4 @@
-use eh_client::{Category, GalleryKey, Site, Tag};
+pub use eh_client::{Category, GalleryKey, Site, Tag};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -74,7 +74,7 @@ impl Default for ReaderSettings {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 #[ts(export)]
 pub struct Settings {
     pub site: Site,

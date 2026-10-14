@@ -49,6 +49,7 @@ impl AppPaths {
         self.data_dir = p.clone();
         self.config_dir = p.join("config");
         self.cache_dir = p.join("cache");
+        self.download_dir = p.join("downloads");
         self
     }
 
