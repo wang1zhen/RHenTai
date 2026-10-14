@@ -4,7 +4,7 @@ use eh_client::{
     Category, CookieLogin, GalleryKey, ListRequest, ListSource, PasswordLogin, SearchFilter,
     ToplistPeriod,
 };
-use rhentai_core::{Core, FavoriteUpdate, IpcError, PageImageKey, ThumbnailRequest};
+use rhentai_core::{Core, IpcError};
 
 fn parse_gallery_key(gallery: &str) -> Result<GalleryKey, IpcError> {
     // GALLERY = full URL or "<gid>/<token>"
@@ -61,14 +61,18 @@ fn parse_list_source(source_str: Option<&str>) -> Result<ListSource, IpcError> {
 }
 
 pub async fn status(core: &Core, json: bool) -> Result<(), IpcError> {
-    let res = core.auth_status().await?;
+    let res = core
+        .client
+        .auth_status(false)
+        .await
+        .map_err(IpcError::from)?;
     if json {
         println!("{}", serde_json::to_string_pretty(&res)?);
     } else {
-        println!(
-            "Logged in: {}, Member ID: {:?}, EX Access: {}",
-            res.logged_in, res.member_id, res.ex_access
-        );
+        println!("Logged in: {}", res.logged_in);
+        println!("Member ID: {}", res.member_id.as_deref().unwrap_or("None"));
+        println!("Username:  {}", res.username.as_deref().unwrap_or("None"));
+        println!("EX Access: {}", res.ex_access);
     }
     Ok(())
 }
@@ -85,7 +89,11 @@ pub async fn login_cookies(
         pass_hash,
         igneous,
     };
-    let res = core.login_cookies(req).await?;
+    let res = core
+        .client
+        .login_cookies(&req)
+        .await
+        .map_err(IpcError::from)?;
     if json {
         println!("{}", serde_json::to_string_pretty(&res)?);
     } else {
@@ -101,7 +109,11 @@ pub async fn login_password(
     json: bool,
 ) -> Result<(), IpcError> {
     let req = PasswordLogin { username, password };
-    let res = core.login_password(req).await?;
+    let res = core
+        .client
+        .login_password(&req)
+        .await
+        .map_err(IpcError::from)?;
     if json {
         println!("{}", serde_json::to_string_pretty(&res)?);
     } else {
@@ -111,7 +123,12 @@ pub async fn login_password(
 }
 
 pub async fn logout(core: &Core, json: bool) -> Result<(), IpcError> {
-    let res = core.logout().await?;
+    core.client.logout().map_err(IpcError::from)?;
+    let res = core
+        .client
+        .auth_status(false)
+        .await
+        .map_err(IpcError::from)?;
     if json {
         println!("{}", serde_json::to_string_pretty(&res)?);
     } else {
@@ -147,38 +164,87 @@ pub async fn list(
         cursor,
     };
 
-    let res = core.list_galleries(req).await?;
+    let res = core.client.list(&req).await.map_err(IpcError::from)?;
     if json {
         println!("{}", serde_json::to_string_pretty(&res)?);
     } else {
-        println!("Found {} items", res.items.len());
+        println!("{:<10} {:<12} {:<5} TITLE", "GID", "CATEGORY", "RATING");
+        println!("{:-<10} {:-<12} {:-<5} {:-<50}", "", "", "", "");
+        for it in &res.items {
+            println!(
+                "{:<10} {:<12?} {:<5.2} {}",
+                it.gid, it.category, it.rating, it.title
+            );
+        }
+        if let Some(ref n) = res.next {
+            println!("Next cursor: {n}");
+        }
+        if let Some(ref p) = res.prev {
+            println!("Prev cursor: {p}");
+        }
     }
     Ok(())
 }
 
 pub async fn detail(core: &Core, gallery: String, json: bool) -> Result<(), IpcError> {
     let key = parse_gallery_key(&gallery)?;
-    let res = core.gallery_detail(key).await?;
+    let res = core
+        .client
+        .gallery_detail(&key)
+        .await
+        .map_err(IpcError::from)?;
     if json {
         println!("{}", serde_json::to_string_pretty(&res)?);
     } else {
-        println!("Title: {}", res.summary.title);
+        println!("GID:         {}", res.summary.gid);
+        println!("Token:       {}", res.summary.token);
+        println!("Title:       {}", res.summary.title);
+        if let Some(ref jpn) = res.summary.title_jpn {
+            println!("Title (JPN): {}", jpn);
+        }
+        println!("Category:    {:?}", res.summary.category);
+        println!(
+            "Uploader:    {}",
+            res.summary.uploader.as_deref().unwrap_or("None")
+        );
+        println!("Pages:       {}", res.summary.file_count);
+        println!("Rating:      {:.2}", res.summary.rating);
+        println!("Language:    {}", res.language.as_deref().unwrap_or("None"));
+        println!(
+            "File Size:   {}",
+            res.file_size.as_deref().unwrap_or("None")
+        );
+        println!("Favorited:   {} times", res.favorited_count.unwrap_or(0));
+        println!("Thumb Pages: {}", res.thumbnail_page_count);
     }
     Ok(())
 }
 
 pub async fn thumbs(core: &Core, gallery: String, page: u32, json: bool) -> Result<(), IpcError> {
     let key = parse_gallery_key(&gallery)?;
-    let req = ThumbnailRequest {
-        gid: key.gid,
-        token: key.token,
-        page,
-    };
-    let res = core.gallery_thumbnails(req).await?;
+    let res = core
+        .client
+        .thumbnails(&key, page)
+        .await
+        .map_err(IpcError::from)?;
     if json {
         println!("{}", serde_json::to_string_pretty(&res)?);
     } else {
-        println!("Page {}: {} thumbnails", res.page, res.pages.len());
+        println!("Thumbnail Page {}: {} items", res.page, res.pages.len());
+        println!(
+            "{:<6} {:<12} {:<24} THUMB URL",
+            "INDEX", "PAGE TOKEN", "FILE NAME"
+        );
+        println!("{:-<6} {:-<12} {:-<24} {:-<40}", "", "", "", "");
+        for p in &res.pages {
+            println!(
+                "{:<6} {:<12} {:<24} {}",
+                p.index,
+                p.page_token,
+                p.file_name.as_deref().unwrap_or("-"),
+                p.thumb.url
+            );
+        }
     }
     Ok(())
 }
@@ -187,32 +253,107 @@ pub async fn image(
     core: &Core,
     gallery: String,
     index: u32,
-    _out: Option<PathBuf>,
+    out: Option<PathBuf>,
     reload: bool,
-    _json: bool,
+    json: bool,
 ) -> Result<(), IpcError> {
     let key = parse_gallery_key(&gallery)?;
+    let detail = core
+        .client
+        .gallery_detail(&key)
+        .await
+        .map_err(IpcError::from)?;
+
+    let page_ref = if let Some(p) = detail.thumbnails.pages.iter().find(|p| p.index == index) {
+        p.clone()
+    } else {
+        let thumbs_per_page = detail.thumbs_per_page.max(1);
+        let page_no = index / thumbs_per_page;
+        let thumb_page = core
+            .client
+            .thumbnails(&key, page_no)
+            .await
+            .map_err(IpcError::from)?;
+        thumb_page
+            .pages
+            .into_iter()
+            .find(|p| p.index == index)
+            .ok_or_else(|| {
+                IpcError::not_found(format!("Page index {index} not found in gallery"))
+            })?
+    };
+
+    let mut page_img = core
+        .client
+        .page_image(&key, &page_ref, None)
+        .await
+        .map_err(IpcError::from)?;
+
     if reload {
-        core.reload_page_image(PageImageKey {
-            gid: key.gid,
-            token: key.token.clone(),
-            index,
-        })
-        .await?;
+        page_img = core
+            .client
+            .page_image(&key, &page_ref, page_img.reload_key.as_deref())
+            .await
+            .map_err(IpcError::from)?;
     }
-    // Stub resolution
-    Err(IpcError::internal(
-        "not implemented: image resolution and download",
-    ))
+
+    let gallery_url = format!(
+        "{}/g/{}/{}/",
+        core.client.site().gallery_root().trim_end_matches('/'),
+        key.gid,
+        key.token
+    );
+
+    let fetched = core
+        .client
+        .fetch_image(&page_img.url, Some(&gallery_url))
+        .await
+        .map_err(IpcError::from)?;
+
+    let path_str = if let Some(ref out_path) = out {
+        if let Some(parent) = out_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(out_path, &fetched.bytes).map_err(|e| IpcError::io(e.to_string()))?;
+        out_path.display().to_string()
+    } else {
+        "<memory>".to_string()
+    };
+
+    let content_type = fetched
+        .content_type
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+    let byte_count = fetched.bytes.len();
+
+    if json {
+        let obj = serde_json::json!({
+            "path": path_str,
+            "contentType": content_type,
+            "bytes": byte_count,
+        });
+        println!("{}", serde_json::to_string_pretty(&obj)?);
+    } else {
+        println!("Path:         {path_str}");
+        println!("Content-Type: {content_type}");
+        println!("Bytes:        {byte_count}");
+    }
+
+    Ok(())
 }
 
 pub async fn favcats(core: &Core, json: bool) -> Result<(), IpcError> {
-    let res = core.favorite_categories().await?;
+    let res = core
+        .client
+        .favorite_categories()
+        .await
+        .map_err(IpcError::from)?;
     if json {
         println!("{}", serde_json::to_string_pretty(&res)?);
     } else {
+        println!("{:<5} {:<24} COUNT", "SLOT", "NAME");
+        println!("{:-<5} {:-<24} {:-<6}", "", "", "");
         for cat in &res {
-            println!("{}: {} ({})", cat.slot, cat.name, cat.count);
+            println!("{:<5} {:<24} {}", cat.slot, cat.name, cat.count);
         }
     }
     Ok(())
@@ -227,17 +368,16 @@ pub async fn fav_set(
     json: bool,
 ) -> Result<(), IpcError> {
     let key = parse_gallery_key(&gallery)?;
-    let req = FavoriteUpdate {
-        gid: key.gid,
-        token: key.token,
-        slot: if remove { None } else { slot },
-        note: note.unwrap_or_default(),
-    };
-    core.set_favorite(req).await?;
+    let target_slot = if remove { None } else { slot };
+    core.client
+        .set_favorite(&key, target_slot, note.as_deref().unwrap_or(""))
+        .await
+        .map_err(IpcError::from)?;
+
     if json {
         println!("{{}}");
     } else {
-        println!("Favorite updated");
+        println!("Favorite updated successfully.");
     }
     Ok(())
 }

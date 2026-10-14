@@ -23,6 +23,28 @@ pub enum ErrorKind {
     Internal,
 }
 
+impl ErrorKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ErrorKind::Network => "network",
+            ErrorKind::Http => "http",
+            ErrorKind::Parse => "parse",
+            ErrorKind::Cloudflare => "cloudflare",
+            ErrorKind::Banned => "banned",
+            ErrorKind::LoginRequired => "loginRequired",
+            ErrorKind::LoginFailed => "loginFailed",
+            ErrorKind::NoExAccess => "noExAccess",
+            ErrorKind::ImageLimit => "imageLimit",
+            ErrorKind::NotFound => "notFound",
+            ErrorKind::InvalidInput => "invalidInput",
+            ErrorKind::Io => "io",
+            ErrorKind::Db => "db",
+            ErrorKind::Cancelled => "cancelled",
+            ErrorKind::Internal => "internal",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Error, Serialize, Deserialize)]
 #[error("error[{kind:?}]: {message}")]
 pub struct EhError {
