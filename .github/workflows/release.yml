@@ -27,8 +27,12 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "RHenTai $GITHUB_REF_NAME" --generate-notes
-          RELEASE_ID=$(gh api repos/${{ github.repository }}/releases --jq '.[] | select(.tag_name == env.TAG) | .id')
+          # Take the id from the create response: listing releases right after creating a
+          # draft can miss it, which left release_id empty and the release without assets.
+          RELEASE_ID=$(gh api -X POST "repos/$GH_REPO/releases" \
+            -f tag_name="$TAG" -f name="RHenTai $TAG" \
+            -F draft=true -F generate_release_notes=true --jq .id)
+          test -n "$RELEASE_ID"
           echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
 
   desktop:
