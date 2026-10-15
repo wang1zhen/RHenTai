@@ -67,7 +67,7 @@ export const ReaderPageImage: React.FC<ReaderPageImageProps> = ({
     >
       {/* Loading state */}
       {isLoading && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-gray-500 bg-gray-950/20 backdrop-blur-xs z-10">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-gray-500 bg-gray-950/20 z-10">
           <Loader2 className="w-8 h-8 animate-spin text-sky-500" />
           <span className="text-xs font-medium">Page {pageIndex + 1}</span>
         </div>

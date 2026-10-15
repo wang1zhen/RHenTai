@@ -85,7 +85,7 @@ const LibraryCardItem: React.FC<LibraryCardItemProps> = ({ gallery, onRemove }) 
           {gallery.category && (
             <CategoryBadge category={gallery.category} size="sm" />
           )}
-          <span className="p-1 rounded-md bg-black/60 backdrop-blur-xs text-white text-[10px]">
+          <span className="p-1 rounded-md bg-black/60 text-white text-[10px]">
             {gallery.kind === "folder" ? (
               <Folder className="w-3 h-3" />
             ) : (
@@ -95,7 +95,7 @@ const LibraryCardItem: React.FC<LibraryCardItemProps> = ({ gallery, onRemove }) 
         </div>
 
         {/* Page Count */}
-        <div className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded-md bg-black/70 backdrop-blur-xs text-white text-[10px] font-medium flex items-center gap-1">
+        <div className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded-md bg-black/70 text-white text-[10px] font-medium flex items-center gap-1">
           <FileText className="w-3 h-3" />
           <span>{gallery.pageCount} {t("pages")}</span>
         </div>
