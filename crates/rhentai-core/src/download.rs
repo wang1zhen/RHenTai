@@ -152,59 +152,96 @@ impl DownloadManager {
         match res {
             Ok(completed) => {
                 if completed {
+                    let _ = self.store.reconcile_download_progress(id);
                     let _ = self
                         .store
                         .update_download_state(id, DownloadState::Completed, None);
+                    let t = self.store.get_download(id).ok().flatten().unwrap_or(task);
                     self.emit_progress(DownloadProgress {
                         id,
-                        done: task.done,
-                        total: task.total,
-                        failed: task.failed,
+                        done: t.done,
+                        total: t.total,
+                        failed: t.failed,
                         state: DownloadState::Completed,
                         error: None,
                         bytes_per_sec: 0,
                     });
                     self.emit_event(CoreEvent::DownloadsChanged);
                     self.emit_event(CoreEvent::LibraryChanged);
-                } else if token.is_cancelled()
-                    && let Ok(Some(current)) = self.store.get_download(id)
-                    && current.state != DownloadState::Queued
-                    && current.state != DownloadState::Running
-                {
-                    let _ = self
+                } else if token.is_cancelled() {
+                    let _ = self.store.reconcile_download_progress(id);
+                    if let Ok(Some(current)) = self.store.get_download(id)
+                        && current.state != DownloadState::Queued
+                        && current.state != DownloadState::Running
+                    {
+                        let _ = self
+                            .store
+                            .update_download_state(id, DownloadState::Paused, None);
+                        let t = self.store.get_download(id).ok().flatten().unwrap_or(task);
+                        self.emit_progress(DownloadProgress {
+                            id,
+                            done: t.done,
+                            total: t.total,
+                            failed: t.failed,
+                            state: DownloadState::Paused,
+                            error: None,
+                            bytes_per_sec: 0,
+                        });
+                        self.emit_event(CoreEvent::DownloadsChanged);
+                    }
+                } else {
+                    let _ = self.store.reconcile_download_progress(id);
+                    let t = self.store.get_download(id).ok().flatten().unwrap_or(task);
+                    let last_err_str = self
                         .store
-                        .update_download_state(id, DownloadState::Paused, None);
+                        .get_download_pages(id)
+                        .ok()
+                        .and_then(|pages| {
+                            pages
+                                .into_iter()
+                                .filter(|p| p.state == "failed")
+                                .filter_map(|p| p.error)
+                                .next_back()
+                        })
+                        .unwrap_or_else(|| "unknown error".to_string());
+                    let summary = format!("{} page(s) failed: {}", t.failed, last_err_str);
+                    let _ =
+                        self.store
+                            .update_download_state(id, DownloadState::Failed, Some(&summary));
                     self.emit_progress(DownloadProgress {
                         id,
-                        done: task.done,
-                        total: task.total,
-                        failed: task.failed,
-                        state: DownloadState::Paused,
-                        error: None,
+                        done: t.done,
+                        total: t.total,
+                        failed: t.failed,
+                        state: DownloadState::Failed,
+                        error: Some(summary),
                         bytes_per_sec: 0,
                     });
                     self.emit_event(CoreEvent::DownloadsChanged);
                 }
             }
             Err(e) => {
-                if token.is_cancelled()
-                    && let Ok(Some(current)) = self.store.get_download(id)
-                    && current.state != DownloadState::Queued
-                    && current.state != DownloadState::Running
-                {
-                    let _ = self
-                        .store
-                        .update_download_state(id, DownloadState::Paused, None);
-                    self.emit_progress(DownloadProgress {
-                        id,
-                        done: task.done,
-                        total: task.total,
-                        failed: task.failed,
-                        state: DownloadState::Paused,
-                        error: None,
-                        bytes_per_sec: 0,
-                    });
-                    self.emit_event(CoreEvent::DownloadsChanged);
+                let _ = self.store.reconcile_download_progress(id);
+                let t = self.store.get_download(id).ok().flatten().unwrap_or(task);
+                if token.is_cancelled() {
+                    if let Ok(Some(current)) = self.store.get_download(id)
+                        && current.state != DownloadState::Queued
+                        && current.state != DownloadState::Running
+                    {
+                        let _ = self
+                            .store
+                            .update_download_state(id, DownloadState::Paused, None);
+                        self.emit_progress(DownloadProgress {
+                            id,
+                            done: t.done,
+                            total: t.total,
+                            failed: t.failed,
+                            state: DownloadState::Paused,
+                            error: None,
+                            bytes_per_sec: 0,
+                        });
+                        self.emit_event(CoreEvent::DownloadsChanged);
+                    }
                 } else if e.kind == ErrorKind::ImageLimit || e.kind == ErrorKind::Banned {
                     self.pause_all_with_error(e.kind, &e.message).await;
                 } else {
@@ -214,9 +251,9 @@ impl DownloadManager {
                             .update_download_state(id, DownloadState::Failed, Some(&err_msg));
                     self.emit_progress(DownloadProgress {
                         id,
-                        done: task.done,
-                        total: task.total,
-                        failed: task.failed,
+                        done: t.done,
+                        total: t.total,
+                        failed: t.failed,
                         state: DownloadState::Failed,
                         error: Some(err_msg),
                         bytes_per_sec: 0,
@@ -435,6 +472,15 @@ impl DownloadManager {
 
                     match fetch_res {
                         Ok(fetched) => {
+                            if fetched.bytes.is_empty() {
+                                page_image = None;
+                                last_err = Some(IpcError::new(
+                                    ErrorKind::Http,
+                                    "Invalid image body: empty body",
+                                ));
+                                continue;
+                            }
+
                             let ext = fetched
                                 .content_type
                                 .as_deref()
@@ -469,6 +515,7 @@ impl DownloadManager {
 
                             let d = done_count.fetch_add(1, Ordering::SeqCst) + 1;
                             let f = failed_count.load(Ordering::SeqCst);
+                            let _ = store.update_download_progress(task_id, d, f, total_count);
                             mgr.throttled_progress(task_id, d, f, total_count, bytes_len, &tracker)
                                 .await;
 
@@ -478,10 +525,8 @@ impl DownloadManager {
                             if e.kind == ErrorKind::ImageLimit || e.kind == ErrorKind::Banned {
                                 return Err(e);
                             }
-                            if e.kind == ErrorKind::Http && e.message.contains("403") {
-                                // HTTP 403 triggers an immediate re-resolve
-                                page_image = None;
-                            }
+                            // Every retryable image failure must invalidate it and re-resolve with retained reload key
+                            page_image = None;
                             last_err = Some(e);
                         }
                     }
@@ -502,6 +547,7 @@ impl DownloadManager {
 
                 let d = done_count.load(Ordering::SeqCst);
                 let f = failed_count.fetch_add(1, Ordering::SeqCst) + 1;
+                let _ = store.update_download_progress(task_id, d, f, total_count);
                 mgr.throttled_progress(task_id, d, f, total_count, 0, &tracker)
                     .await;
 
@@ -514,21 +560,26 @@ impl DownloadManager {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
                     join_set.abort_all();
+                    let _ = self.store.reconcile_download_progress(task.id);
                     return Err(e);
                 }
                 Err(e) => {
                     join_set.abort_all();
+                    let _ = self.store.reconcile_download_progress(task.id);
                     return Err(IpcError::internal(e.to_string()));
                 }
             }
         }
 
-        task.done = done_count.load(Ordering::SeqCst);
-        task.failed = failed_count.load(Ordering::SeqCst);
-
-        let _ = self
-            .store
-            .update_download_progress(task.id, task.done, task.failed, task.total);
+        let _ = self.store.reconcile_download_progress(task.id);
+        if let Ok(Some(refreshed)) = self.store.get_download(task.id) {
+            task.done = refreshed.done;
+            task.failed = refreshed.failed;
+            task.total = refreshed.total;
+        } else {
+            task.done = done_count.load(Ordering::SeqCst);
+            task.failed = failed_count.load(Ordering::SeqCst);
+        }
 
         if token.is_cancelled() {
             return Ok(false);
@@ -699,7 +750,11 @@ impl DownloadManager {
         let original = req.original.unwrap_or(default_original);
 
         for key in req.galleries {
-            if let Some(existing) = self.store.get_download_by_gid(key.gid)? {
+            if let Some(mut existing) = self.store.get_download_by_gid(key.gid)? {
+                let _ = self.store.reconcile_download_progress(existing.id);
+                if let Ok(Some(refreshed)) = self.store.get_download(existing.id) {
+                    existing = refreshed;
+                }
                 res.push(existing);
             } else {
                 let now = current_time_secs();
@@ -741,6 +796,7 @@ impl DownloadManager {
         if let Some(token) = self.task_tokens.lock().await.get(&id) {
             token.cancel();
         }
+        let _ = self.store.reconcile_download_progress(id);
         self.store
             .update_download_state(id, DownloadState::Paused, None)?;
         if let Some(t) = self.store.get_download(id)? {
@@ -761,6 +817,7 @@ impl DownloadManager {
 
     pub async fn resume(&self, id: i64) -> Result<()> {
         self.store.reset_failed_pages_for_download(id)?;
+        let _ = self.store.reconcile_download_progress(id);
         self.store
             .update_download_state(id, DownloadState::Queued, None)?;
         if let Some(t) = self.store.get_download(id)? {
@@ -813,6 +870,7 @@ impl DownloadManager {
         for t in tokens {
             t.cancel();
         }
+        let _ = self.store.reconcile_all_downloads_progress();
         if let Ok(tasks) = self.store.list_downloads() {
             for t in tasks {
                 if t.state == DownloadState::Running || t.state == DownloadState::Queued {
@@ -840,18 +898,21 @@ impl DownloadManager {
             for t in tasks {
                 if t.state == DownloadState::Paused || t.state == DownloadState::Failed {
                     let _ = self.store.reset_failed_pages_for_download(t.id);
+                    let _ = self.store.reconcile_download_progress(t.id);
                     let _ = self
                         .store
                         .update_download_state(t.id, DownloadState::Queued, None);
-                    self.emit_progress(DownloadProgress {
-                        id: t.id,
-                        done: t.done,
-                        total: t.total,
-                        failed: t.failed,
-                        state: DownloadState::Queued,
-                        error: None,
-                        bytes_per_sec: 0,
-                    });
+                    if let Ok(Some(refreshed)) = self.store.get_download(t.id) {
+                        self.emit_progress(DownloadProgress {
+                            id: refreshed.id,
+                            done: refreshed.done,
+                            total: refreshed.total,
+                            failed: refreshed.failed,
+                            state: DownloadState::Queued,
+                            error: None,
+                            bytes_per_sec: 0,
+                        });
+                    }
                 }
             }
         }

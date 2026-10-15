@@ -5,7 +5,7 @@ use tokio::net::TcpListener;
 
 use eh_client::client::{ClientConfig, EhClient};
 use eh_client::error::ErrorKind;
-use eh_client::model::RawCookie;
+use eh_client::model::{CookieLogin, RawCookie};
 
 #[tokio::test]
 async fn test_offline_cookie_persistence() {
@@ -289,4 +289,181 @@ async fn test_content_warning_retry_limit() {
         2,
         "request_html should retry at most once"
     );
+}
+
+#[tokio::test]
+async fn test_cookie_login_network_error_leaves_no_unverified_credentials() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "rhentai_cookie_network_err_test_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let cookie_path = temp_dir.join("cookies.json");
+
+    let client = EhClient::new(ClientConfig {
+        cookie_path: Some(cookie_path.clone()),
+        proxy: Some("http://127.0.0.1:9".to_string()),
+        min_request_interval_ms: 0,
+        ..Default::default()
+    })
+    .expect("failed to create client");
+
+    let res = client
+        .login_cookies(&CookieLogin {
+            member_id: "1".into(),
+            pass_hash: "00000000000000000000000000000000".into(),
+            igneous: None,
+        })
+        .await;
+
+    assert!(res.is_err(), "login_cookies via refused proxy must fail");
+    assert_eq!(res.unwrap_err().kind, ErrorKind::Network);
+
+    drop(client);
+
+    let client_new = EhClient::new(ClientConfig {
+        cookie_path: Some(cookie_path.clone()),
+        ..Default::default()
+    })
+    .expect("failed to create client_new");
+
+    let status = client_new.auth_status(false).await.unwrap();
+    assert!(
+        !status.logged_in,
+        "new client must report logged_in == false after failed login"
+    );
+    assert_eq!(status.member_id, None);
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[tokio::test]
+async fn test_cookie_login_failure_preserves_prior_session() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "rhentai_cookie_preserve_test_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let cookie_path = temp_dir.join("cookies.json");
+
+    let client = EhClient::new(ClientConfig {
+        cookie_path: Some(cookie_path.clone()),
+        proxy: Some("http://127.0.0.1:9".to_string()),
+        min_request_interval_ms: 0,
+        ..Default::default()
+    })
+    .expect("failed to create client");
+
+    // Establish prior session with member_id "5"
+    client
+        .import_cookies(&[
+            RawCookie {
+                name: "ipb_member_id".into(),
+                value: "5".into(),
+                domain: ".e-hentai.org".into(),
+                path: "/".into(),
+            },
+            RawCookie {
+                name: "ipb_pass_hash".into(),
+                value: "55555555555555555555555555555555".into(),
+                domain: ".e-hentai.org".into(),
+                path: "/".into(),
+            },
+        ])
+        .unwrap();
+
+    let status_before = client.auth_status(false).await.unwrap();
+    assert!(status_before.logged_in);
+    assert_eq!(status_before.member_id.as_deref(), Some("5"));
+
+    // Attempt failed login with member_id "1"
+    let res = client
+        .login_cookies(&CookieLogin {
+            member_id: "1".into(),
+            pass_hash: "11111111111111111111111111111111".into(),
+            igneous: None,
+        })
+        .await;
+
+    assert!(res.is_err());
+
+    drop(client);
+
+    // Verify prior session stays intact
+    let client_new = EhClient::new(ClientConfig {
+        cookie_path: Some(cookie_path.clone()),
+        ..Default::default()
+    })
+    .unwrap();
+
+    let status_after = client_new.auth_status(false).await.unwrap();
+    assert!(
+        status_after.logged_in,
+        "prior session must remain logged in after failed login attempt"
+    );
+    assert_eq!(
+        status_after.member_id.as_deref(),
+        Some("5"),
+        "member_id 5 must stay intact"
+    );
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_cookie_file_mode_enforced_on_existing_file() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp_dir = std::env::temp_dir().join(format!(
+        "rhentai_cookie_mode_test_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let cookie_path = temp_dir.join("cookies.json");
+
+    // Pre-create file with mode 0644
+    std::fs::write(&cookie_path, b"[]").unwrap();
+    std::fs::set_permissions(&cookie_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(
+        std::fs::metadata(&cookie_path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o644
+    );
+
+    let client = EhClient::new(ClientConfig {
+        cookie_path: Some(cookie_path.clone()),
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Trigger save by logging out (which clears and saves)
+    client.logout().unwrap();
+
+    let mode = std::fs::metadata(&cookie_path)
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(
+        mode, 0o600,
+        "Cookie file mode must be tightened to 0600 on existing files"
+    );
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
 }

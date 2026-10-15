@@ -25,10 +25,12 @@ struct FakePageSource {
     fetch_counts: Arc<Mutex<HashMap<u32, usize>>>,
     reload_keys_received: Arc<Mutex<Vec<(u32, Option<String>)>>>,
     fail_509_on_index: Arc<Mutex<Option<u32>>>,
+    fail_502_on_index: Arc<Mutex<HashMap<u32, usize>>>,
     transient_failures_left: Arc<Mutex<HashMap<u32, usize>>>,
     gate_semaphore: Arc<Semaphore>,
     gate_arrived: Arc<Notify>,
     gate_active: Arc<AtomicBool>,
+    gate_min_index: Arc<Mutex<Option<u32>>>,
     tags: Arc<Mutex<Vec<eh_client::Tag>>>,
 }
 
@@ -44,10 +46,12 @@ impl FakePageSource {
             fetch_counts: Arc::new(Mutex::new(HashMap::new())),
             reload_keys_received: Arc::new(Mutex::new(Vec::new())),
             fail_509_on_index: Arc::new(Mutex::new(None)),
+            fail_502_on_index: Arc::new(Mutex::new(HashMap::new())),
             transient_failures_left: Arc::new(Mutex::new(HashMap::new())),
             gate_semaphore: Arc::new(Semaphore::new(0)),
             gate_arrived: Arc::new(Notify::new()),
             gate_active: Arc::new(AtomicBool::new(false)),
+            gate_min_index: Arc::new(Mutex::new(None)),
             tags: Arc::new(Mutex::new(vec![eh_client::Tag {
                 namespace: "artist".to_string(),
                 name: "test_artist".to_string(),
@@ -166,15 +170,6 @@ impl PageSource for FakePageSource {
         _referer: Option<&'a str>,
     ) -> BoxFuture<'a, Result<FetchedImage>> {
         Box::pin(async move {
-            if self.gate_active.load(Ordering::SeqCst) {
-                self.gate_arrived.notify_waiters();
-                let _permit = self
-                    .gate_semaphore
-                    .acquire()
-                    .await
-                    .map_err(|_| IpcError::internal("Gate closed"))?;
-            }
-
             let idx = url
                 .split('/')
                 .next_back()
@@ -185,6 +180,32 @@ impl PageSource for FakePageSource {
             let mut counts = self.fetch_counts.lock().await;
             *counts.entry(idx).or_insert(0) += 1;
             drop(counts);
+
+            if self.gate_active.load(Ordering::SeqCst) {
+                let should_gate = match *self.gate_min_index.lock().await {
+                    Some(min_idx) => idx >= min_idx,
+                    None => true,
+                };
+                if should_gate {
+                    self.gate_arrived.notify_waiters();
+                    let _permit = self
+                        .gate_semaphore
+                        .acquire()
+                        .await
+                        .map_err(|_| IpcError::internal("Gate closed"))?;
+                }
+            }
+
+            let mut fails_502 = self.fail_502_on_index.lock().await;
+            if let Some(count) = fails_502.get_mut(&idx)
+                && *count > 0
+            {
+                *count -= 1;
+                return Err(IpcError::new(
+                    eh_client::ErrorKind::Http,
+                    "HTTP 502 Bad Gateway: dead H@H node",
+                ));
+            }
 
             let mut fails = self.transient_failures_left.lock().await;
             if let Some(count) = fails.get_mut(&idx)
@@ -748,6 +769,190 @@ async fn test_download_resume_fetches_detail_tags() {
         content.contains("\"test_artist\""),
         "Tags should appear in rhentai.json on resume: {content}"
     );
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+async fn wait_for_state_timeout(
+    rx: &mut broadcast::Receiver<CoreEvent>,
+    task_id: i64,
+    target_state: DownloadState,
+    timeout: Duration,
+) -> std::result::Result<DownloadProgress, ()> {
+    tokio::time::timeout(timeout, async {
+        loop {
+            match rx.recv().await {
+                Ok(CoreEvent::DownloadProgress(p)) => {
+                    if p.id == task_id && p.state == target_state {
+                        return p;
+                    }
+                }
+                Ok(_) => {}
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(e) => panic!("Event receiver error: {e:?}"),
+            }
+        }
+    })
+    .await
+    .map_err(|_| ())
+}
+
+#[tokio::test]
+async fn test_download_exhausted_retries_becomes_terminal_failed() {
+    let (temp_dir, settings, store) = setup_test_env("exhausted_retries");
+    let fake = FakePageSource::new(1);
+    // Exhaust all 5 attempts with a non-limit error (HTTP 502)
+    fake.fail_502_on_index.lock().await.insert(0, 5);
+
+    let (tx, _) = broadcast::channel(100);
+    let manager = DownloadManager::new(
+        store.clone(),
+        Arc::new(fake.clone()),
+        settings.clone(),
+        Arc::new(NoopEventSink),
+        tx.clone(),
+    );
+    let mut rx = tx.subscribe();
+    manager.start();
+
+    let tasks = manager
+        .enqueue(EnqueueRequest {
+            galleries: vec![GalleryKey {
+                gid: 901,
+                token: "tok901".to_string(),
+            }],
+            original: Some(false),
+        })
+        .await
+        .unwrap();
+
+    let task_id = tasks[0].id;
+
+    // Event-driven wait for Failed state
+    let progress = wait_for_state_timeout(
+        &mut rx,
+        task_id,
+        DownloadState::Failed,
+        Duration::from_secs(2),
+    )
+    .await
+    .expect("Timed out waiting for Failed state");
+    assert_eq!(progress.state, DownloadState::Failed);
+    assert_eq!(progress.failed, 1);
+    assert!(progress.error.is_some(), "Progress must report error");
+
+    // Assert 5 fetch attempts for that page
+    let counts = fake.fetch_counts.lock().await;
+    assert_eq!(counts.get(&0), Some(&5), "Must have made 5 fetch attempts");
+
+    // Assert the task row in store is Failed with an error summary
+    let task = store.get_download(task_id).unwrap().unwrap();
+    assert_eq!(task.state, DownloadState::Failed);
+    assert_eq!(task.failed, 1);
+    let err_msg = task.error.expect("Task row must have error summary");
+    assert!(
+        err_msg.contains("1 page(s) failed"),
+        "Error message must summarize failed pages: {err_msg}"
+    );
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[tokio::test]
+async fn test_download_non403_failure_must_reresolve_with_nl() {
+    let (temp_dir, settings, store) = setup_test_env("non403_reresolve");
+    let fake = FakePageSource::new(1);
+    // Page 0 fails once with HTTP 502, then succeeds
+    fake.fail_502_on_index.lock().await.insert(0, 1);
+
+    let (tx, _) = broadcast::channel(100);
+    let manager = DownloadManager::new(
+        store.clone(),
+        Arc::new(fake.clone()),
+        settings.clone(),
+        Arc::new(NoopEventSink),
+        tx.clone(),
+    );
+    let mut rx = tx.subscribe();
+    manager.start();
+
+    let tasks = manager
+        .enqueue(EnqueueRequest {
+            galleries: vec![GalleryKey {
+                gid: 902,
+                token: "tok902".to_string(),
+            }],
+            original: Some(false),
+        })
+        .await
+        .unwrap();
+
+    let task_id = tasks[0].id;
+    wait_for_state(&mut rx, task_id, DownloadState::Completed).await;
+
+    let calls = fake.reload_keys_received.lock().await.clone();
+    assert_eq!(
+        calls,
+        vec![(0, None), (0, Some("reload_key_0".to_string()))],
+        "Retryable non-403 failure must re-resolve with retained reload key"
+    );
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[tokio::test]
+async fn test_download_paused_reconciles_done_count_with_gated_fake() {
+    let (temp_dir, settings, store) = setup_test_env("paused_reconcile");
+    let k = 2;
+    let fake = FakePageSource::new(4);
+    // Gate pages starting from index 2 (k = 2)
+    *fake.gate_min_index.lock().await = Some(k);
+    fake.gate_active.store(true, Ordering::SeqCst);
+
+    let (tx, _) = broadcast::channel(100);
+    let manager = DownloadManager::new(
+        store.clone(),
+        Arc::new(fake.clone()),
+        settings.clone(),
+        Arc::new(NoopEventSink),
+        tx.clone(),
+    );
+    let mut rx = tx.subscribe();
+    manager.start();
+
+    let tasks = manager
+        .enqueue(EnqueueRequest {
+            galleries: vec![GalleryKey {
+                gid: 903,
+                token: "tok903".to_string(),
+            }],
+            original: Some(false),
+        })
+        .await
+        .unwrap();
+
+    let task_id = tasks[0].id;
+
+    // Await fetch arriving at gate for the gated pages
+    tokio::time::timeout(Duration::from_secs(5), fake.gate_arrived.notified())
+        .await
+        .expect("Fetch should arrive at gate");
+
+    // Pause task while held at gate
+    manager.pause(task_id).await.unwrap();
+
+    let paused_progress = wait_for_state(&mut rx, task_id, DownloadState::Paused).await;
+    assert_eq!(
+        paused_progress.done, k,
+        "Paused progress event must report done == k"
+    );
+
+    let task = store.get_download(task_id).unwrap().unwrap();
+    assert_eq!(task.done, k, "Task row in store must report done == k");
+
+    // Release gate
+    fake.gate_active.store(false, Ordering::SeqCst);
+    fake.gate_semaphore.add_permits(100);
 
     let _ = fs::remove_dir_all(&temp_dir);
 }

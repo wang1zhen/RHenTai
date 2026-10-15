@@ -75,7 +75,8 @@ impl RateLimiter {
         let now = tokio::time::Instant::now();
         if now < *last {
             tokio::time::sleep(*last - now).await;
-            *last += self.min_interval;
+            let actual_wake = tokio::time::Instant::now();
+            *last = actual_wake + self.min_interval;
         } else {
             *last = now + self.min_interval;
         }
@@ -144,6 +145,15 @@ fn save_cookies(store: &cookie_store::CookieStore, path: &Path) -> Result<()> {
     let file = options.open(path).map_err(|e| EhError::io(e.to_string()))?;
     let mut writer = std::io::BufWriter::new(file);
     cookie_store::serde::json::save(store, &mut writer).map_err(|e| EhError::io(e.to_string()))?;
+    drop(writer);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        let _ = std::fs::set_permissions(path, perms);
+    }
+
     Ok(())
 }
 
@@ -596,45 +606,104 @@ impl EhClient {
     }
 
     pub async fn login_cookies(&self, req: &CookieLogin) -> Result<AuthStatus> {
+        let snapshot = self.snapshot_credential_cookies();
         self.persist_login_cookies(&req.member_id, &req.pass_hash, req.igneous.as_deref())?;
 
-        // Verify through home.php without following redirects
+        let verify_res = self.verify_login_request().await;
+        match verify_res {
+            Ok(()) => self.auth_status(true).await,
+            Err(e) => {
+                let _ = self.restore_credential_cookies(&snapshot);
+                Err(e)
+            }
+        }
+    }
+
+    async fn verify_login_request(&self) -> Result<()> {
         let client_no_redir = self.inner.no_redirect_client.read().unwrap().clone();
         let _permit = self.inner.rate_limiter.acquire().await?;
-        let resp = match client_no_redir
+        let resp = client_no_redir
             .get("https://e-hentai.org/home.php")
             .send()
             .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                return Err(EhError::network(e.to_string()));
-            }
-        };
+            .map_err(|e| EhError::network(e.to_string()))?;
         drop(_permit);
 
-        if resp.status().is_redirection()
-            && let Some(loc) = resp
-                .headers()
+        let status = resp.status();
+        let headers = resp.headers().clone();
+        let final_url = resp.url().to_string();
+
+        if status.is_redirection() {
+            if let Some(loc) = headers
                 .get(reqwest::header::LOCATION)
                 .and_then(|v| v.to_str().ok())
-            && loc.contains("bounce_login.php")
-        {
-            self.remove_credential_cookies()?;
+                && loc.contains("bounce_login.php")
+            {
+                return Err(EhError::login_failed(
+                    "Invalid credentials: redirected to bounce_login.php",
+                ));
+            }
             return Err(EhError::login_failed(
-                "Invalid credentials: redirected to bounce_login.php",
+                "Login verification redirected unexpectedly",
             ));
         }
 
-        if !resp.status().is_success() {
-            self.remove_credential_cookies()?;
+        if !status.is_success() {
             return Err(EhError::login_failed(format!(
                 "Login verification returned HTTP {}",
-                resp.status()
+                status
             )));
         }
 
-        self.auth_status(true).await
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| EhError::network(e.to_string()))?;
+
+        detect_special_page(status, &headers, &final_url, &body)?;
+
+        Ok(())
+    }
+
+    pub(crate) fn snapshot_credential_cookies(&self) -> Vec<RawCookie> {
+        let store = self.inner.cookie_store.read().unwrap();
+        let credential_names = ["ipb_member_id", "ipb_pass_hash", "igneous"];
+        store
+            .iter_any()
+            .filter(|c| credential_names.contains(&c.name()))
+            .map(|c| RawCookie {
+                name: c.name().to_string(),
+                value: c.value().to_string(),
+                domain: String::from(&c.domain),
+                path: c.path.to_string(),
+            })
+            .collect()
+    }
+
+    pub(crate) fn restore_credential_cookies(&self, snapshot: &[RawCookie]) -> Result<()> {
+        let eh_url =
+            Url::parse("https://e-hentai.org/").map_err(|e| EhError::internal(e.to_string()))?;
+        {
+            let mut store = self.inner.cookie_store.write().unwrap();
+            remove_credential_cookies_from_store(&mut store);
+            for c in snapshot {
+                let path = if c.path.is_empty() { "/" } else { &c.path };
+                let cookie_str = format!(
+                    "{}={}; Domain={}; Path={}; Max-Age=31536000",
+                    c.name, c.value, c.domain, path
+                );
+                let domain_clean = c.domain.trim_start_matches('.');
+                let target_url = Url::parse(&format!("https://{domain_clean}/"))
+                    .unwrap_or_else(|_| eh_url.clone());
+                let _ = store.parse(&cookie_str, &target_url);
+            }
+            ensure_default_cookies(&mut store);
+
+            if let Some(ref path) = self.inner.persistent_jar.cookie_path {
+                save_cookies(&store, path)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn remove_credential_cookies(&self) -> Result<()> {
