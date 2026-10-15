@@ -80,14 +80,10 @@ export function setupMock() {
   updateFavoriteCategoryCounts();
 
   // Registered event listeners for mock event emission
-  const eventListeners = new Map<string, Array<(payload: unknown) => void>>();
-
   function emitEvent(event: string, payload: unknown) {
-    const list = eventListeners.get(event);
-    if (list) {
-      for (const cb of list) {
-        cb(payload);
-      }
+    const win = window as any;
+    if (win.__TAURI_INTERNALS__?.invoke) {
+      win.__TAURI_INTERNALS__.invoke("plugin:event|emit", { event, payload });
     }
   }
 
@@ -126,23 +122,8 @@ export function setupMock() {
     }
   }, 1000);
 
-  // Install Tauri mock IPC
+  // Install Tauri mock IPC with shouldMockEvents: true
   mockIPC(async (cmd, args) => {
-    // Event plugin handling
-    if (cmd === "plugin:event|listen") {
-      const { event, handler } = (args as { event: string; handler: (p: unknown) => void });
-      if (!eventListeners.has(event)) {
-        eventListeners.set(event, []);
-      }
-      eventListeners.get(event)!.push(handler);
-      return handler;
-    }
-
-    if (cmd === "plugin:event|emit") {
-      const { event, payload } = (args as { event: string; payload: unknown });
-      emitEvent(event, payload);
-      return null;
-    }
 
     if (cmd === "plugin:dialog|open") {
       return "/home/user/Downloads/RHenTai";
@@ -485,7 +466,7 @@ export function setupMock() {
         console.warn(`[Mock IPC] Unhandled command: ${cmd}`, args);
         return null;
     }
-  });
+  }, { shouldMockEvents: true });
 
   // Mock convertFileSrc for rhimg:// protocol
   const win = window as any;

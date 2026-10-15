@@ -49,7 +49,7 @@ export const WatchedPage: React.FC = () => {
   const allItems = data?.pages.flatMap((page) => page.items) || [];
 
   return (
-    <div className="flex flex-col h-full w-full overflow-hidden">
+    <div className="flex-1 min-h-0 flex flex-col w-full overflow-hidden">
       {/* Header */}
       <div className="px-6 py-3 border-b border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-gray-900/70 backdrop-blur-md shrink-0 flex items-center justify-between">
         <div className="flex items-center gap-2">

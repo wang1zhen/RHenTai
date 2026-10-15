@@ -86,7 +86,6 @@ export const GalleryCard: React.FC<GalleryCardProps> = ({
             key={retryCount}
             src={retryCount > 0 ? `${thumbUrl(gallery.thumb)}?v=${retryCount}` : thumbUrl(gallery.thumb)}
             alt={gallery.title}
-            loading="lazy"
             decoding="async"
             onError={() => setHasError(true)}
             className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
@@ -101,7 +100,7 @@ export const GalleryCard: React.FC<GalleryCardProps> = ({
         {/* Favorite marker */}
         {gallery.favoriteSlot !== null && (
           <div
-            className="absolute top-2 right-2 p-1.5 rounded-full bg-rose-500/90 text-white shadow-md backdrop-blur-xs z-10"
+            className="absolute top-2 right-2 p-1.5 rounded-full bg-rose-500/90 text-white shadow-md z-10"
             title={`${t("favoriteSlot")}: ${gallery.favoriteSlot}`}
           >
             <Heart className="w-3.5 h-3.5 fill-current" />
@@ -111,7 +110,7 @@ export const GalleryCard: React.FC<GalleryCardProps> = ({
         {/* Select mode checkbox */}
         {isSelectMode && (
           <div
-            className="absolute top-2 right-2 z-20 p-1 rounded-lg bg-black/60 backdrop-blur-xs text-white"
+            className="absolute top-2 right-2 z-20 p-1 rounded-lg bg-black/60 text-white"
             onClick={(e) => {
               e.stopPropagation();
               onToggleSelect?.(gallery.gid);
@@ -126,7 +125,7 @@ export const GalleryCard: React.FC<GalleryCardProps> = ({
         )}
 
         {/* Page Count overlay at bottom-right of image */}
-        <div className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded-md bg-black/70 backdrop-blur-xs text-white text-[10px] font-medium flex items-center gap-1">
+        <div className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded-md bg-black/70 text-white text-[10px] font-medium flex items-center gap-1">
           <FileText className="w-3 h-3" />
           <span>{gallery.fileCount} {t("pages")}</span>
         </div>

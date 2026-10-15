@@ -165,7 +165,7 @@ export const GalleryGrid: React.FC<GalleryGridProps> = ({
   };
 
   return (
-    <div className="relative flex flex-col h-full w-full overflow-hidden">
+    <div className="relative flex-1 min-h-0 flex flex-col h-full w-full overflow-hidden">
       {/* Top Bar / Select Mode Toggle */}
       <div className="flex items-center justify-between px-6 py-2.5 border-b border-gray-200 dark:border-gray-800 bg-white/50 dark:bg-gray-900/50 backdrop-blur-xs shrink-0 z-10">
         <div className="text-xs text-gray-500 font-medium">
@@ -204,8 +204,7 @@ export const GalleryGrid: React.FC<GalleryGridProps> = ({
       {/* Virtualized Container */}
       <div
         ref={parentRef}
-        className="flex-1 overflow-y-auto px-6 py-4 pb-24"
-        style={{ contain: "strict" }}
+        className="flex-1 min-h-0 overflow-y-auto px-6 py-4 pb-24"
       >
         <div
           style={{
