@@ -13,9 +13,9 @@ use crate::model::{
     Site, ThumbnailPage,
 };
 use crate::parse::{
-    detect_special_page, is_content_warning, parse_favorite_categories, parse_gallery_detail,
-    parse_gallery_list, parse_gdata_response, parse_image_page, parse_login_response,
-    parse_thumbnail_page,
+    detect_special_page, is_content_warning, parse_favorite_categories, parse_favorite_note,
+    parse_gallery_detail, parse_gallery_list, parse_gdata_response, parse_image_page,
+    parse_login_response, parse_thumbnail_page,
 };
 
 pub const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
@@ -862,7 +862,39 @@ impl EhClient {
             key.token
         );
         let html = self.request_html(&url, None).await?;
-        parse_gallery_detail(&html, key)
+        let mut detail = parse_gallery_detail(&html, key)?;
+
+        if detail.summary.favorite_slot.is_some() {
+            let popup_url = format!(
+                "{}/gallerypopups.php?gid={}&t={}&act=addfav",
+                site_root.trim_end_matches('/'),
+                key.gid,
+                key.token
+            );
+            match self.request_html(&popup_url, Some(&url)).await {
+                Ok(popup_html) => match parse_favorite_note(&popup_html) {
+                    Ok(note) => {
+                        detail.summary.favorite_note = note;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            gid = key.gid,
+                            error = %e,
+                            "Failed to parse favorite note from popup"
+                        );
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!(
+                        gid = key.gid,
+                        error = %e,
+                        "Failed to fetch favorite popup HTML"
+                    );
+                }
+            }
+        }
+
+        Ok(detail)
     }
 
     pub async fn thumbnails(&self, key: &GalleryKey, page: u32) -> Result<ThumbnailPage> {

@@ -1,6 +1,8 @@
-use eh_client::parse::{parse_favorite_categories, parse_gallery_list};
+use eh_client::parse::{parse_favorite_categories, parse_favorite_note, parse_gallery_list};
 
 const FAVORITES: &str = include_str!("fixtures/synthetic_favorites.html");
+const FAV_POPUP_NOTE: &str = include_str!("fixtures/synthetic_fav_popup_note.html");
+const FAV_POPUP_EMPTY: &str = include_str!("fixtures/synthetic_fav_popup_empty.html");
 
 #[test]
 fn test_favorite_categories_parser() {
@@ -41,4 +43,13 @@ fn test_favorite_list_items_parser() {
 
     assert_eq!(list.prev, Some("prev:654321".to_string()));
     assert_eq!(list.next, Some("next:123456".to_string()));
+}
+
+#[test]
+fn test_parse_favorite_note_fixtures() {
+    let note = parse_favorite_note(FAV_POPUP_NOTE).expect("should parse favorite note");
+    assert_eq!(note, Some("rhentai-qa & more".to_string()));
+
+    let empty = parse_favorite_note(FAV_POPUP_EMPTY).expect("should parse empty favorite note");
+    assert_eq!(empty, None);
 }
