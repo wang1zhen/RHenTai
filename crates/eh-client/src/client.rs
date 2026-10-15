@@ -427,37 +427,109 @@ impl EhClient {
     }
 
     // auth (docs/EH_PROTOCOL.md §2)
+    fn credentials_from_jar(&self) -> (Option<String>, bool, Option<String>) {
+        let store = self.inner.cookie_store.read().unwrap();
+        let mut mid = None;
+        let mut pass = false;
+        let mut ign = None;
+
+        if let Ok(eh_url) = Url::parse("https://e-hentai.org/") {
+            for (name, val) in store.get_request_values(&eh_url) {
+                if name == "ipb_member_id" {
+                    mid = Some(val.to_string());
+                } else if name == "ipb_pass_hash" {
+                    pass = true;
+                }
+            }
+        }
+
+        if let Ok(ex_url) = Url::parse("https://exhentai.org/") {
+            for (name, val) in store.get_request_values(&ex_url) {
+                if name == "ipb_member_id" && mid.is_none() {
+                    mid = Some(val.to_string());
+                } else if name == "ipb_pass_hash" {
+                    pass = true;
+                } else if name == "igneous" {
+                    ign = Some(val.to_string());
+                }
+            }
+        }
+
+        (mid, pass, ign)
+    }
+
+    async fn complete_verified_status(
+        &self,
+        member_id: Option<String>,
+        ex_access_cookie: bool,
+    ) -> Result<AuthStatus> {
+        // Check EX access online
+        let mut ex_access = ex_access_cookie;
+        let http_client = self.inner.http_client.read().unwrap().clone();
+        {
+            let _permit = self.inner.rate_limiter.acquire().await?;
+            if let Ok(ex_resp) = http_client.get("https://exhentai.org/").send().await {
+                let status = ex_resp.status();
+                let body = ex_resp.text().await.unwrap_or_default();
+                ex_access = status.is_success()
+                    && detect_special_page(
+                        status,
+                        &reqwest::header::HeaderMap::new(),
+                        "https://exhentai.org/",
+                        &body,
+                    )
+                    .is_ok();
+            }
+        }
+
+        // Fetch username (best effort)
+        let mut username = None;
+        if let Some(ref mid) = member_id {
+            let profile_url = Site::forums_profile_url(mid);
+            let _permit = self.inner.rate_limiter.acquire().await?;
+            if let Ok(u_resp) = http_client.get(&profile_url).send().await
+                && let Ok(u_html) = u_resp.text().await
+            {
+                username = parse_username_from_profile(&u_html);
+            }
+        }
+
+        Ok(AuthStatus {
+            logged_in: true,
+            member_id,
+            username,
+            ex_access,
+        })
+    }
+
+    pub(crate) async fn finish_login<F, Fut>(
+        &self,
+        snapshot: Vec<RawCookie>,
+        step: F,
+    ) -> Result<AuthStatus>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<AuthStatus>>,
+    {
+        match step().await {
+            Ok(status) => {
+                if !status.logged_in {
+                    let _ = self.restore_credential_cookies(&snapshot);
+                    Err(EhError::login_failed("Login verification failed"))
+                } else {
+                    Ok(status)
+                }
+            }
+            Err(e) => {
+                let _ = self.restore_credential_cookies(&snapshot);
+                Err(e)
+            }
+        }
+    }
+
+    // auth (docs/EH_PROTOCOL.md §2)
     pub async fn auth_status(&self, verify_online: bool) -> Result<AuthStatus> {
-        let (member_id, has_pass, igneous) = {
-            let store = self.inner.cookie_store.read().unwrap();
-            let mut mid = None;
-            let mut pass = false;
-            let mut ign = None;
-
-            if let Ok(eh_url) = Url::parse("https://e-hentai.org/") {
-                for (name, val) in store.get_request_values(&eh_url) {
-                    if name == "ipb_member_id" {
-                        mid = Some(val.to_string());
-                    } else if name == "ipb_pass_hash" {
-                        pass = true;
-                    }
-                }
-            }
-
-            if let Ok(ex_url) = Url::parse("https://exhentai.org/") {
-                for (name, val) in store.get_request_values(&ex_url) {
-                    if name == "ipb_member_id" && mid.is_none() {
-                        mid = Some(val.to_string());
-                    } else if name == "ipb_pass_hash" {
-                        pass = true;
-                    } else if name == "igneous" {
-                        ign = Some(val.to_string());
-                    }
-                }
-            }
-
-            (mid, pass, ign)
-        };
+        let (member_id, has_pass, igneous) = self.credentials_from_jar();
 
         let ex_access_cookie = igneous.as_deref().map(is_valid_igneous).unwrap_or(false);
 
@@ -515,108 +587,75 @@ impl EhClient {
             });
         }
 
-        let logged_in = true;
-
-        // Check EX access online
-        let mut ex_access = ex_access_cookie;
-        let http_client = self.inner.http_client.read().unwrap().clone();
-        {
-            let _permit = self.inner.rate_limiter.acquire().await?;
-            if let Ok(ex_resp) = http_client.get("https://exhentai.org/").send().await {
-                let status = ex_resp.status();
-                let body = ex_resp.text().await.unwrap_or_default();
-                ex_access = status.is_success()
-                    && detect_special_page(
-                        status,
-                        &reqwest::header::HeaderMap::new(),
-                        "https://exhentai.org/",
-                        &body,
-                    )
-                    .is_ok();
-            }
-        }
-
-        // Fetch username (best effort)
-        let mut username = None;
-        if let Some(ref mid) = member_id {
-            let profile_url = Site::forums_profile_url(mid);
-            let _permit = self.inner.rate_limiter.acquire().await?;
-            if let Ok(u_resp) = http_client.get(&profile_url).send().await
-                && let Ok(u_html) = u_resp.text().await
-            {
-                username = parse_username_from_profile(&u_html);
-            }
-        }
-
-        Ok(AuthStatus {
-            logged_in,
-            member_id,
-            username,
-            ex_access,
-        })
+        self.complete_verified_status(member_id, ex_access_cookie)
+            .await
     }
 
     pub async fn login_password(&self, req: &PasswordLogin) -> Result<AuthStatus> {
-        let client = self.inner.http_client.read().unwrap().clone();
-        let _permit = self.inner.rate_limiter.acquire().await?;
+        let snapshot = self.snapshot_credential_cookies();
+        self.finish_login(snapshot, || async {
+            let client = self.inner.http_client.read().unwrap().clone();
+            let _permit = self.inner.rate_limiter.acquire().await?;
 
-        let form = [
-            ("referer", "https://forums.e-hentai.org/index.php"),
-            ("b", ""),
-            ("bt", ""),
-            ("UserName", &req.username),
-            ("PassWord", &req.password),
-            ("CookieDate", "365"),
-        ];
+            let form = [
+                ("referer", "https://forums.e-hentai.org/index.php"),
+                ("b", ""),
+                ("bt", ""),
+                ("UserName", &req.username),
+                ("PassWord", &req.password),
+                ("CookieDate", "365"),
+            ];
 
-        let form_body = url::form_urlencoded::Serializer::new(String::new())
-            .extend_pairs(&form)
-            .finish();
+            let form_body = url::form_urlencoded::Serializer::new(String::new())
+                .extend_pairs(&form)
+                .finish();
 
-        let resp = client
-            .post(Site::forums_login_url())
-            .header(reqwest::header::ORIGIN, "https://forums.e-hentai.org")
-            .header(
-                reqwest::header::REFERER,
-                "https://forums.e-hentai.org/index.php?act=Login&CODE=00",
-            )
-            .header(
-                reqwest::header::CONTENT_TYPE,
-                "application/x-www-form-urlencoded",
-            )
-            .body(form_body)
-            .send()
-            .await
-            .map_err(|e| EhError::network(e.to_string()))?;
-        drop(_permit);
+            let resp = client
+                .post(Site::forums_login_url())
+                .header(reqwest::header::ORIGIN, "https://forums.e-hentai.org")
+                .header(
+                    reqwest::header::REFERER,
+                    "https://forums.e-hentai.org/index.php?act=Login&CODE=00",
+                )
+                .header(
+                    reqwest::header::CONTENT_TYPE,
+                    "application/x-www-form-urlencoded",
+                )
+                .body(form_body)
+                .send()
+                .await
+                .map_err(|e| EhError::network(e.to_string()))?;
+            drop(_permit);
 
-        let status = resp.status();
-        let headers = resp.headers().clone();
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| EhError::network(e.to_string()))?;
+            let status = resp.status();
+            let headers = resp.headers().clone();
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| EhError::network(e.to_string()))?;
 
-        let login_res = parse_login_response(status, &headers, &body)?;
+            let login_res = parse_login_response(status, &headers, &body)?;
 
-        // Store cookies
-        self.persist_login_cookies(&login_res.member_id, &login_res.pass_hash, None)?;
+            // Store cookies
+            self.persist_login_cookies(&login_res.member_id, &login_res.pass_hash, None)?;
 
-        self.auth_status(true).await
+            self.auth_status(true).await
+        })
+        .await
     }
 
     pub async fn login_cookies(&self, req: &CookieLogin) -> Result<AuthStatus> {
         let snapshot = self.snapshot_credential_cookies();
         self.persist_login_cookies(&req.member_id, &req.pass_hash, req.igneous.as_deref())?;
 
-        let verify_res = self.verify_login_request().await;
-        match verify_res {
-            Ok(()) => self.auth_status(true).await,
-            Err(e) => {
-                let _ = self.restore_credential_cookies(&snapshot);
-                Err(e)
-            }
-        }
+        self.finish_login(snapshot, || async {
+            self.verify_login_request().await?;
+            let (member_id, _, igneous) = self.credentials_from_jar();
+            let ex_access_cookie = igneous.as_deref().map(is_valid_igneous).unwrap_or(false);
+            self.complete_verified_status(member_id, ex_access_cookie)
+                .await
+        })
+        .await
     }
 
     async fn verify_login_request(&self) -> Result<()> {
@@ -1068,5 +1107,301 @@ impl EhClient {
         }
 
         Ok(ordered)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::ErrorKind;
+
+    #[tokio::test]
+    async fn test_finish_login_err_preserves_prior_session() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "rhentai_auth_test_err_prior_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let cookie_path = temp_dir.join("cookies.json");
+
+        let client = EhClient::new(ClientConfig {
+            cookie_path: Some(cookie_path.clone()),
+            min_request_interval_ms: 0,
+            ..Default::default()
+        })
+        .unwrap();
+
+        // Seed prior session with member "5"
+        client.persist_login_cookies("5", "hash5", None).unwrap();
+
+        let snapshot = client.snapshot_credential_cookies();
+        // Install new unverified credentials
+        client.persist_login_cookies("99", "hash99", None).unwrap();
+
+        // Step returns Err
+        let res = client
+            .finish_login(snapshot, || async {
+                Err(EhError::network("simulated transport error"))
+            })
+            .await;
+
+        assert!(res.is_err());
+        let err = res.unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Network);
+        assert!(err.message.contains("simulated transport error"));
+
+        drop(client);
+
+        // Verify with a NEW client on the same path
+        let new_client = EhClient::new(ClientConfig {
+            cookie_path: Some(cookie_path.clone()),
+            min_request_interval_ms: 0,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let status = new_client.auth_status(false).await.unwrap();
+        assert!(status.logged_in, "prior session must remain logged in");
+        assert_eq!(
+            status.member_id.as_deref(),
+            Some("5"),
+            "member 5 must survive"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_finish_login_err_no_prior_session_rolls_back() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "rhentai_auth_test_err_noprior_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let cookie_path = temp_dir.join("cookies.json");
+
+        let client = EhClient::new(ClientConfig {
+            cookie_path: Some(cookie_path.clone()),
+            min_request_interval_ms: 0,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let snapshot = client.snapshot_credential_cookies();
+        assert!(snapshot.is_empty());
+
+        // Install new unverified credentials
+        client.persist_login_cookies("99", "hash99", None).unwrap();
+
+        // Step returns Err
+        let res = client
+            .finish_login(snapshot, || async {
+                Err(EhError::network("simulated network error"))
+            })
+            .await;
+
+        assert!(res.is_err());
+        let err = res.unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Network);
+
+        drop(client);
+
+        // Verify with a NEW client on the same path
+        let new_client = EhClient::new(ClientConfig {
+            cookie_path: Some(cookie_path.clone()),
+            min_request_interval_ms: 0,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let status = new_client.auth_status(false).await.unwrap();
+        assert!(!status.logged_in, "must remain logged out");
+        assert_eq!(status.member_id, None);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_finish_login_logged_out_status_rolls_back_and_returns_login_failed() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "rhentai_auth_test_logout_status_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let cookie_path = temp_dir.join("cookies.json");
+
+        let client = EhClient::new(ClientConfig {
+            cookie_path: Some(cookie_path.clone()),
+            min_request_interval_ms: 0,
+            ..Default::default()
+        })
+        .unwrap();
+
+        // Seed prior session with member "5"
+        client.persist_login_cookies("5", "hash5", None).unwrap();
+
+        let snapshot = client.snapshot_credential_cookies();
+
+        // Install new unverified credentials
+        client.persist_login_cookies("99", "hash99", None).unwrap();
+
+        // Step returns Ok with logged_in = false
+        let res = client
+            .finish_login(snapshot, || async {
+                Ok(AuthStatus {
+                    logged_in: false,
+                    member_id: None,
+                    username: None,
+                    ex_access: false,
+                })
+            })
+            .await;
+
+        assert!(res.is_err(), "must return Err when logged_in is false");
+        let err = res.unwrap_err();
+        assert_eq!(err.kind, ErrorKind::LoginFailed);
+
+        drop(client);
+
+        // Verify with a NEW client on the same path
+        let new_client = EhClient::new(ClientConfig {
+            cookie_path: Some(cookie_path.clone()),
+            min_request_interval_ms: 0,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let status = new_client.auth_status(false).await.unwrap();
+        assert!(status.logged_in, "prior session must remain intact");
+        assert_eq!(status.member_id.as_deref(), Some("5"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_finish_login_logged_out_status_fresh_rolls_back() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "rhentai_auth_test_logout_fresh_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let cookie_path = temp_dir.join("cookies.json");
+
+        let client = EhClient::new(ClientConfig {
+            cookie_path: Some(cookie_path.clone()),
+            min_request_interval_ms: 0,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let snapshot = client.snapshot_credential_cookies();
+
+        client.persist_login_cookies("99", "hash99", None).unwrap();
+
+        let res = client
+            .finish_login(snapshot, || async {
+                Ok(AuthStatus {
+                    logged_in: false,
+                    member_id: None,
+                    username: None,
+                    ex_access: false,
+                })
+            })
+            .await;
+
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err().kind, ErrorKind::LoginFailed);
+
+        drop(client);
+
+        let new_client = EhClient::new(ClientConfig {
+            cookie_path: Some(cookie_path.clone()),
+            min_request_interval_ms: 0,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let status = new_client.auth_status(false).await.unwrap();
+        assert!(!status.logged_in);
+        assert_eq!(status.member_id, None);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_finish_login_success_keeps_and_persists_credentials() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "rhentai_auth_test_success_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let cookie_path = temp_dir.join("cookies.json");
+
+        let client = EhClient::new(ClientConfig {
+            cookie_path: Some(cookie_path.clone()),
+            min_request_interval_ms: 0,
+            ..Default::default()
+        })
+        .unwrap();
+
+        // Optional prior session with member "5"
+        client.persist_login_cookies("5", "hash5", None).unwrap();
+
+        let snapshot = client.snapshot_credential_cookies();
+
+        // Install new credentials
+        client.persist_login_cookies("99", "hash99", None).unwrap();
+
+        let res = client
+            .finish_login(snapshot, || async {
+                Ok(AuthStatus {
+                    logged_in: true,
+                    member_id: Some("99".to_string()),
+                    username: Some("TestUser99".to_string()),
+                    ex_access: false,
+                })
+            })
+            .await;
+
+        assert!(res.is_ok());
+        let status = res.unwrap();
+        assert!(status.logged_in);
+        assert_eq!(status.member_id.as_deref(), Some("99"));
+
+        drop(client);
+
+        // Verify with a NEW client on the same path
+        let new_client = EhClient::new(ClientConfig {
+            cookie_path: Some(cookie_path.clone()),
+            min_request_interval_ms: 0,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let new_status = new_client.auth_status(false).await.unwrap();
+        assert!(new_status.logged_in);
+        assert_eq!(new_status.member_id.as_deref(), Some("99"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
