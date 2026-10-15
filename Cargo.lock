@@ -3614,6 +3614,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "eh-client",
+ "log",
  "percent-encoding",
  "rhentai-core",
  "serde",
@@ -3624,6 +3625,8 @@ dependencies = [
  "tauri-plugin-log",
  "tauri-plugin-opener",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "url",
 ]
 

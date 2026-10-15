@@ -177,8 +177,8 @@ impl ImageService {
             let _ = fs::remove_file(page_cache_path);
         }
 
-        let mut images = self.page_images.write().await;
-        if let Some(old) = images.remove(&(gid, index))
+        let old = self.page_images.write().await.remove(&(gid, index));
+        if let Some(old) = old
             && let Some(rk) = old.reload_key
         {
             self.reload_keys.write().await.insert((gid, index), rk);
@@ -235,7 +235,8 @@ impl ImageService {
         }
 
         // Fetch detail if thumbs_per_page is not known
-        let tpp = match self.thumbs_per_page.read().await.get(&key.gid).copied() {
+        let cached = self.thumbs_per_page.read().await.get(&key.gid).copied();
+        let tpp = match cached {
             Some(n) => n,
             None => {
                 let detail = self.source.gallery_detail(key).await?;

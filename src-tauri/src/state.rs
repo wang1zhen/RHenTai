@@ -16,10 +16,22 @@ pub fn init_state(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|_| data_dir.clone())
         .join("RHenTai");
 
-    let app_paths = AppPaths::new(data_dir, config_dir, cache_dir, download_dir);
+    let mut app_paths = AppPaths::new(data_dir, config_dir, cache_dir, download_dir);
+    if let Ok(override_dir) = std::env::var("RHENTAI_DATA_DIR")
+        && !override_dir.is_empty()
+    {
+        app_paths = app_paths.with_data_dir_override(override_dir);
+    }
+
     let sink = Arc::new(TauriSink(app_handle.clone()));
     let core = Core::open(app_paths, sink)?;
 
-    app.manage(core);
+    app.manage(core.clone());
+
+    let core_for_start = core.clone();
+    tauri::async_runtime::spawn(async move {
+        core_for_start.start();
+    });
+
     Ok(())
 }
