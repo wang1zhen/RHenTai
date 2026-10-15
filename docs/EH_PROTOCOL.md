@@ -78,6 +78,13 @@ strings, e.g. `"Misc"`.
 - Batch (on the favorites page URL): `POST /favorites.php` with `ddact=fav<0..9>` or `ddact=delete`,
   repeated `modifygids[]=<gid>`, and `apply=Apply`.
 - Success is HTTP 200 without an error box. Afterwards, re-read the list or detail for the new state.
+- Reading the current favorite: `GET /gallerypopups.php?gid={gid}&t={token}&act=addfav` (paced like any HTML
+  request, Referer = the gallery URL). The form `#galpop` holds radio inputs `favcat` 0..9 (ids `fav0`..`fav9`)
+  and `textarea[name=favnote]`, which contains the user's current note (empty when not favorited). **LIVE
+  2026-10-15**: one radio is ALWAYS `checked`, and `fav0` is checked even when the gallery is not favorited, so
+  never infer the favorited state or slot from the popup; take them from the detail page. When favorited, the form
+  also offers `favdel`. This popup is the ONLY place
+  the note can be read: the detail page and the lists show the category name, never the note.
 
 ## 2. Login and session
 
@@ -170,8 +177,9 @@ Clear the jar, re-add `nw=1`, and persist.
 - Tags: `#taglist tr`. `td.tc` is the namespace with its trailing `:`; tags are `td:nth-child(2) a`
   (text). Element ids look like `ta_<namespace>:<tag_with_underscores>`.
 - Favorite: `#favoritelink` text (`Add to Favorites` means not favorited; otherwise the category name),
-  and `#fav .i` style `background-position:0px -Ypx` → slot `(Y - 2) / 19`. Note: if present, the
-  `#fav .i` `title` is the category name.
+  and `#fav .i` style `background-position:0px -Ypx` → slot `(Y - 2) / 19`. The `#fav .i` `title` attribute,
+  when present, is also the category name. It is NOT the user's favorite note: never map it to
+  `favorite_note`. The note comes only from the popup (§1.7).
 - Comments: `#cdiv .c1` → author `.c3 a` (or `.c3` text after `by:`), posted text from `.c3`
   (`Posted on …`), score `.c5 span`, body `.c6` (text, `<br>` → newline). The uploader comment has `#comment_0`.
 - API credentials (internal): `var apiuid = (\d+);` and `var apikey = "(\w+)";`.
