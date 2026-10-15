@@ -24,6 +24,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
           gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "RHenTai $GITHUB_REF_NAME" --generate-notes
