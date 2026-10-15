@@ -10,11 +10,22 @@ A cross-platform desktop & mobile reader for E-Hentai and ExHentai, built with R
 
 ### Features
 - Online browsing and search across E-Hentai and ExHentai
-- Gallery details, tags, comments, and high-resolution thumbnail grids
+- Gallery details with grouped tags, comments, and a paged thumbnail preview
 - Continuous vertical and paged reader with keyboard and touch navigation
 - Batch download manager with pause, resume, and background queueing
 - Local library supporting image folders and ZIP/CBZ archives
 - History tracking, favorites management, and configurable proxy/network settings
+
+### Download
+Installers are on the GitHub Releases page: https://github.com/wang1zhen/RHenTai/releases
+- Linux: .AppImage / .deb / .rpm
+- Windows: .msi / -setup.exe
+- macOS: universal .dmg
+- Android: arm64 .apk, only when the release lists it
+- The desktop builds are not code-signed:
+  - macOS: right-click the app, then Open, or run `xattr -dr com.apple.quarantine /Applications/RHenTai.app`
+  - Windows: SmartScreen shows "More info → Run anyway"
+- iOS has no build, because distribution needs an Apple developer account.
 
 ### Development Commands
 ```bash
@@ -49,11 +60,22 @@ cargo test --workspace
 
 ### 功能特性
 - 支持 E-Hentai 和 ExHentai 在线画廊浏览与高级搜索
-- 画廊详情、标签分组、评论以及雪碧图缩略图网格
+- 画廊详情（分组标签、评论）与分页缩略图预览
 - 纵向连续与分页双阅读模式，支持键盘与触控手势
 - 批量下载管理器，支持暂停、断点续传及并发控制
 - 本地书库，支持扫描图片文件夹与 ZIP/CBZ 压缩包
 - 阅读历史记录、收藏夹管理以及代理配置
+
+### 下载
+安装包可在 GitHub Releases 页面获取：https://github.com/wang1zhen/RHenTai/releases
+- Linux: .AppImage / .deb / .rpm
+- Windows: .msi / -setup.exe
+- macOS: universal .dmg
+- Android: arm64 .apk，仅在 Release 列表中提供时
+- 桌面端构建未进行代码签名：
+  - macOS: 右键点击应用选择“打开”，或运行 `xattr -dr com.apple.quarantine /Applications/RHenTai.app`
+  - Windows: SmartScreen 提示“更多信息 → 仍要运行”
+- iOS 暂无构建，因为分发需要 Apple 开发者账号。
 
 ### 开发命令
 ```bash
