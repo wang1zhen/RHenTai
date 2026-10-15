@@ -55,22 +55,12 @@ pub async fn download(
     for t in &tasks {
         if t.state == DownloadState::Paused || t.state == DownloadState::Failed {
             core.resume_download(TaskId { id: t.id }).await?;
-            let line = format!(
-                "[task {}] resuming {}: {}/{} pages already present",
-                t.id, t.gid, t.done, t.total
-            );
-            if json {
-                eprintln!("{line}");
-            } else {
-                println!("{line}");
-            }
+        }
+        let line = format_task_start_message(t);
+        if json {
+            eprintln!("{line}");
         } else {
-            let line = format!("[task {}] starting {}", t.id, t.gid);
-            if json {
-                eprintln!("{line}");
-            } else {
-                println!("{line}");
-            }
+            println!("{line}");
         }
     }
 
@@ -230,4 +220,71 @@ pub async fn library_pages(core: &Core, id: String, json: bool) -> Result<(), Ip
         }
     }
     Ok(())
+}
+
+pub(crate) fn format_task_start_message(t: &DownloadTask) -> String {
+    if t.done > 0 || t.state == DownloadState::Paused || t.state == DownloadState::Failed {
+        format!(
+            "[task {}] resuming {}: {}/{} pages already present",
+            t.id, t.gid, t.done, t.total
+        )
+    } else {
+        format!("[task {}] starting {}", t.id, t.gid)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rhentai_core::Category;
+
+    #[test]
+    fn test_n1_message_selection_restored_queued_task() {
+        let restored_queued_task = DownloadTask {
+            id: 4,
+            gid: 4253608,
+            token: "06c93f5210".to_string(),
+            site: eh_client::Site::Eh,
+            title: "Test Gallery".to_string(),
+            thumb: String::new(),
+            category: Category::Manga,
+            total: 41,
+            done: 8,
+            failed: 0,
+            state: DownloadState::Queued,
+            error: None,
+            dir: "/tmp/test".to_string(),
+            original: false,
+            created_at: 0,
+            updated_at: 0,
+        };
+
+        let msg = format_task_start_message(&restored_queued_task);
+        assert_eq!(msg, "[task 4] resuming 4253608: 8/41 pages already present");
+    }
+
+    #[test]
+    fn test_n1_message_selection_fresh_task() {
+        let fresh_task = DownloadTask {
+            id: 1,
+            gid: 123456,
+            token: "token123".to_string(),
+            site: eh_client::Site::Eh,
+            title: "Fresh Gallery".to_string(),
+            thumb: String::new(),
+            category: Category::Manga,
+            total: 0,
+            done: 0,
+            failed: 0,
+            state: DownloadState::Queued,
+            error: None,
+            dir: "/tmp/fresh".to_string(),
+            original: false,
+            created_at: 0,
+            updated_at: 0,
+        };
+
+        let msg = format_task_start_message(&fresh_task);
+        assert_eq!(msg, "[task 1] starting 123456");
+    }
 }

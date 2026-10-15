@@ -193,6 +193,51 @@ impl Store {
         Ok(())
     }
 
+    pub fn reconcile_download_progress(&self, download_id: i64) -> Result<(u32, u32, u32)> {
+        let conn = self.conn.lock().unwrap();
+        let now = current_time_secs();
+        conn.execute(
+            "UPDATE downloads
+             SET done = (SELECT COUNT(*) FROM download_pages WHERE download_pages.download_id = ?1 AND download_pages.state = 'done'),
+                 failed = (SELECT COUNT(*) FROM download_pages WHERE download_pages.download_id = ?1 AND download_pages.state = 'failed'),
+                 total = CASE 
+                     WHEN total = 0 AND (SELECT COUNT(*) FROM download_pages WHERE download_pages.download_id = ?1) > 0 
+                     THEN (SELECT COUNT(*) FROM download_pages WHERE download_pages.download_id = ?1) 
+                     ELSE total 
+                 END,
+                 updated_at = ?2
+             WHERE id = ?1 AND EXISTS (SELECT 1 FROM download_pages WHERE download_pages.download_id = ?1)",
+            params![download_id, now],
+        )?;
+
+        let mut stmt = conn.prepare("SELECT done, failed, total FROM downloads WHERE id = ?1")?;
+        let res = stmt
+            .query_row(params![download_id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .unwrap_or((0, 0, 0));
+        Ok(res)
+    }
+
+    pub fn reconcile_all_downloads_progress(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = current_time_secs();
+        conn.execute(
+            "UPDATE downloads
+             SET done = (SELECT COUNT(*) FROM download_pages WHERE download_pages.download_id = downloads.id AND download_pages.state = 'done'),
+                 failed = (SELECT COUNT(*) FROM download_pages WHERE download_pages.download_id = downloads.id AND download_pages.state = 'failed'),
+                 total = CASE 
+                     WHEN total = 0 AND (SELECT COUNT(*) FROM download_pages WHERE download_pages.download_id = downloads.id) > 0 
+                     THEN (SELECT COUNT(*) FROM download_pages WHERE download_pages.download_id = downloads.id) 
+                     ELSE total 
+                 END,
+                 updated_at = ?1
+             WHERE EXISTS (SELECT 1 FROM download_pages WHERE download_pages.download_id = downloads.id)",
+            params![now],
+        )?;
+        Ok(())
+    }
+
     pub fn update_download_detail(
         &self,
         id: i64,

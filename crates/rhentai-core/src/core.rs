@@ -53,6 +53,7 @@ impl Core {
 
         // Restore state: tasks left running become queued
         store.reset_running_downloads_to_queued()?;
+        store.reconcile_all_downloads_progress()?;
 
         let (broadcast_tx, _) = broadcast::channel(256);
         let source: Arc<dyn PageSource> = Arc::new(client.clone());
