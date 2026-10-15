@@ -29,9 +29,21 @@ pub async fn login_cookies(
     core.login_cookies(req).await
 }
 
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn login_web(
+    app: tauri::AppHandle,
+    core: tauri::State<'_, Core>,
+) -> Result<(), IpcError> {
+    crate::login_window::login_web(&app, &core).await
+}
+
+#[cfg(not(desktop))]
 #[tauri::command]
 pub async fn login_web(_core: tauri::State<'_, Core>) -> Result<(), IpcError> {
-    Err(IpcError::internal("not implemented: login_web"))
+    Err(IpcError::invalid_input(
+        "login_web is not supported on mobile",
+    ))
 }
 
 #[tauri::command]
@@ -197,9 +209,26 @@ pub async fn clear_history(core: tauri::State<'_, Core>) -> Result<(), IpcError>
     core.clear_history().await
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 pub async fn open_path(core: tauri::State<'_, Core>, req: PathRequest) -> Result<(), IpcError> {
-    core.open_path(req).await
+    core.open_path(req.clone()).await?;
+    let path = req.path;
+    tokio::task::spawn_blocking(move || {
+        tauri_plugin_opener::reveal_item_in_dir(&path)
+            .or_else(|_| tauri_plugin_opener::open_path(&path, None::<&str>))
+            .map_err(|e| IpcError::io(e.to_string()))
+    })
+    .await
+    .map_err(|e| IpcError::internal(e.to_string()))?
+}
+
+#[cfg(not(desktop))]
+#[tauri::command]
+pub async fn open_path(_core: tauri::State<'_, Core>, _req: PathRequest) -> Result<(), IpcError> {
+    Err(IpcError::invalid_input(
+        "open_path is not supported on mobile",
+    ))
 }
 
 #[tauri::command]
