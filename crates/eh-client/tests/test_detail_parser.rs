@@ -48,4 +48,33 @@ fn test_gallery_detail_parser() {
     assert_eq!(p1.page_token, "085d1326b5");
     assert_eq!(p1.file_name, Some("0002.jpg".to_string()));
     assert_eq!(p1.thumb.offset_x, -200);
+
+    // Unfavorited gallery detail has both None
+    assert_eq!(detail.summary.favorite_slot, None);
+    assert_eq!(detail.summary.favorite_note, None);
+}
+
+#[test]
+fn test_gallery_detail_favorite_note_is_none_with_fav_present() {
+    let key = GalleryKey {
+        gid: 123456,
+        token: "abcdef1234".to_string(),
+    };
+    let html = r#"
+    <div id="gd2"><h1 id="gn">Test Gallery</h1></div>
+    <div id="gdf">
+      <div id="fav"><div class="i" title="Favorites 9" style="background-position:0px -173px"></div></div>
+      <a id="favoritelink">Favorites 9</a>
+    </div>
+    "#;
+    let detail = parse_gallery_detail(html, &key).expect("should parse gallery detail");
+    assert_eq!(
+        detail.summary.favorite_slot,
+        Some(9),
+        "favorite_slot should be parsed from background-position"
+    );
+    assert_eq!(
+        detail.summary.favorite_note, None,
+        "favorite_note must be None even when #fav .i title and category name are present"
+    );
 }

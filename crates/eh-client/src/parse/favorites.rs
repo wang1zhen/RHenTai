@@ -90,6 +90,27 @@ pub fn parse_favorite_categories(html: &str) -> Result<Vec<FavoriteCategory>> {
     Ok(categories)
 }
 
+/// Parse favorite note from gallery popup HTML (gallerypopups.php?act=addfav).
+/// Returns HTML-decoded textarea[name=favnote] text, trimmed; empty string becomes None.
+pub fn parse_favorite_note(html: &str) -> Result<Option<String>> {
+    let document = Html::parse_document(html);
+    let textarea_sel = Selector::parse("textarea[name=favnote]")
+        .map_err(|e| EhError::parse(format!("Selector error: {e}")))?;
+
+    let el = document
+        .select(&textarea_sel)
+        .next()
+        .ok_or_else(|| EhError::parse("Missing textarea[name=favnote] in favorite popup"))?;
+
+    let text: String = el.text().collect();
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(trimmed.to_string()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,5 +177,40 @@ mod tests {
             parse_favorite_slot_from_position("background-position:0px -173px"),
             Some(9)
         );
+    }
+
+    #[test]
+    fn test_parse_favorite_note_basic() {
+        let html = r#"<form id="galpop"><textarea name="favnote">hello world</textarea></form>"#;
+        assert_eq!(
+            parse_favorite_note(html).unwrap(),
+            Some("hello world".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_favorite_note_html_entities() {
+        let html =
+            r#"<form id="galpop"><textarea name="favnote">rhentai-qa &amp; more</textarea></form>"#;
+        assert_eq!(
+            parse_favorite_note(html).unwrap(),
+            Some("rhentai-qa & more".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_favorite_note_empty_and_whitespace() {
+        let html_empty = r#"<form id="galpop"><textarea name="favnote"></textarea></form>"#;
+        assert_eq!(parse_favorite_note(html_empty).unwrap(), None);
+
+        let html_whitespace =
+            "<form id=\"galpop\"><textarea name=\"favnote\">   \n\t  </textarea></form>";
+        assert_eq!(parse_favorite_note(html_whitespace).unwrap(), None);
+    }
+
+    #[test]
+    fn test_parse_favorite_note_missing_textarea() {
+        let html = r#"<form id="galpop"><p>No textarea</p></form>"#;
+        assert!(parse_favorite_note(html).is_err());
     }
 }

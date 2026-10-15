@@ -228,35 +228,15 @@ pub fn parse_gallery_detail(html: &str, key: &GalleryKey) -> Result<GalleryDetai
         tag_groups.push(TagGroup { namespace, tags });
     }
 
-    // Favorite: #favoritelink and #fav .i
-    let fav_link_sel = Selector::parse("#favoritelink")
-        .map_err(|e| EhError::parse(format!("Selector error: {e}")))?;
-    let fav_link_text = document
-        .select(&fav_link_sel)
-        .next()
-        .map(|el| el.text().collect::<Vec<_>>().join(" ").trim().to_string());
-
+    // Favorite: #fav .i background-position -> favorite_slot; favorite_note is None (read only from popup)
     let fav_i_sel =
         Selector::parse("#fav .i").map_err(|e| EhError::parse(format!("Selector error: {e}")))?;
-    let (favorite_slot, favorite_note) = if let Some(fav_i) = document.select(&fav_i_sel).next() {
-        let slot = fav_i
-            .value()
-            .attr("style")
-            .and_then(parse_favorite_slot_from_position);
-        let note = fav_i
-            .value()
-            .attr("title")
-            .map(|s| s.trim().to_string())
-            .or_else(|| {
-                fav_link_text
-                    .as_ref()
-                    .filter(|s| s.as_str() != "Add to Favorites")
-                    .cloned()
-            });
-        (slot, note)
-    } else {
-        (None, None)
-    };
+    let favorite_slot = document
+        .select(&fav_i_sel)
+        .next()
+        .and_then(|fav_i| fav_i.value().attr("style"))
+        .and_then(parse_favorite_slot_from_position);
+    let favorite_note = None;
 
     // Thumbnails: p=0
     let thumbnails = parse_thumbnails_from_html(html, 0)?;

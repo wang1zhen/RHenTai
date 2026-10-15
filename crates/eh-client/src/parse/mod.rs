@@ -16,7 +16,8 @@ pub use auth::{LoginSuccess, parse_login_response};
 pub use date::parse_eh_date;
 pub use detail::parse_gallery_detail;
 pub use favorites::{
-    parse_favorite_categories, parse_favorite_slot_from_border, parse_favorite_slot_from_position,
+    parse_favorite_categories, parse_favorite_note, parse_favorite_slot_from_border,
+    parse_favorite_slot_from_position,
 };
 pub use image::parse_image_page;
 pub use list::parse_gallery_list;
