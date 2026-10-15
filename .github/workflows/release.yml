@@ -99,13 +99,15 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
+      # The runner image ships the Android SDK; android-actions/setup-android@v3 fails with
+      # cmdline-tools 16 ("Failed to find package 'tools'"), so use the preinstalled sdkmanager.
       - name: Install Android NDK and tools
         run: |
-          sdkmanager --install "ndk;27.2.12479018" "build-tools;35.0.0" "platforms;android-35"
-          echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> $GITHUB_ENV
+          SDKM=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | sort -V | tail -1)
+          echo "Using $SDKM"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" --install "ndk;27.2.12479018" "build-tools;35.0.0" "platforms;android-35"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
