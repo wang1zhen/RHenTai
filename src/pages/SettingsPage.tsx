@@ -145,7 +145,7 @@ export const SettingsPage: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full w-full overflow-hidden">
+    <div className="flex-1 min-h-0 flex flex-col w-full overflow-hidden">
       {/* Header */}
       <div className="px-6 py-3 border-b border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-gray-900/70 backdrop-blur-md shrink-0 flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -169,7 +169,7 @@ export const SettingsPage: React.FC = () => {
       {/* Form Content */}
       <form
         onSubmit={handleSave}
-        className="flex-1 overflow-y-auto p-4 sm:p-6 pb-28 space-y-6 max-w-4xl mx-auto w-full"
+        className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 pb-28 space-y-6 max-w-4xl mx-auto w-full"
       >
         {/* Account Section */}
         <section className="p-5 rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 space-y-4 shadow-xs">

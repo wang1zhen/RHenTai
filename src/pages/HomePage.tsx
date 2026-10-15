@@ -98,7 +98,7 @@ export const HomePage: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full w-full overflow-hidden">
+    <div className="flex-1 min-h-0 flex flex-col w-full overflow-hidden">
       {/* Category Filter Chips Bar */}
       <div className="px-3 sm:px-6 py-2.5 border-b border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-gray-900/70 backdrop-blur-md shrink-0 flex items-center justify-between gap-2 overflow-hidden select-none">
         <div className="flex items-center gap-1.5 flex-nowrap overflow-x-auto py-1 scrollbar-none min-w-0 flex-1">

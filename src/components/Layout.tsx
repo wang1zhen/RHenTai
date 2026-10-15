@@ -204,7 +204,7 @@ export const Layout: React.FC = () => {
         </header>
 
         {/* Scrollable page body */}
-        <main className="flex-1 overflow-y-auto pb-16 md:pb-0 relative">
+        <main className="flex-1 flex flex-col min-h-0 overflow-hidden relative pb-16 md:pb-0">
           <Outlet />
         </main>
 
