@@ -793,7 +793,8 @@ impl DownloadManager {
     }
 
     pub async fn pause(&self, id: i64) -> Result<()> {
-        if let Some(token) = self.task_tokens.lock().await.get(&id) {
+        let token = self.task_tokens.lock().await.get(&id).cloned();
+        if let Some(token) = token {
             token.cancel();
         }
         let _ = self.store.reconcile_download_progress(id);
@@ -837,7 +838,8 @@ impl DownloadManager {
     }
 
     pub async fn remove(&self, id: i64, delete_files: bool) -> Result<()> {
-        if let Some(token) = self.task_tokens.lock().await.get(&id) {
+        let token = self.task_tokens.lock().await.get(&id).cloned();
+        if let Some(token) = token {
             token.cancel();
         }
         if let Some(task) = self.store.remove_download(id)?
